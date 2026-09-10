@@ -1,0 +1,27 @@
+{
+  "name": "暖记 · 记账本",
+  "short_name": "暖记",
+  "description": "简约温暖的本地记账本：语音记账、日历、统计圆形图、预算提醒。",
+  "lang": "zh-CN",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF7EF",
+  "theme_color": "#FFF7EF",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
