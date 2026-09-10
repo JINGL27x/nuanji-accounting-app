@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="0" fill="#FFF7EF"/>
+  <!-- 内容集中在安全区(中心80%) -->
+  <rect x="166" y="120" width="200" height="272" rx="34" fill="#FF8A5B"/>
+  <rect x="190" y="142" width="176" height="232" rx="22" fill="#FFFFFF"/>
+  <path d="M286 142 v56 l-21 -18 -21 18 v-56 z" fill="#3ED35A"/>
+  <g stroke="#FFD2BD" stroke-width="10" stroke-linecap="round">
+    <line x1="214" y1="196" x2="346" y2="196"/>
+    <line x1="214" y1="234" x2="346" y2="234"/>
+    <line x1="214" y1="272" x2="346" y2="272"/>
+    <line x1="214" y1="310" x2="284" y2="310"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="166" cy="172" r="11"/>
+    <circle cx="166" cy="222" r="11"/>
+    <circle cx="166" cy="272" r="11"/>
+    <circle cx="166" cy="322" r="11"/>
+    <circle cx="166" cy="372" r="11"/>
+  </g>
+  <g fill="#FF8A5B">
+    <circle cx="166" cy="172" r="5"/>
+    <circle cx="166" cy="222" r="5"/>
+    <circle cx="166" cy="272" r="5"/>
+    <circle cx="166" cy="322" r="5"/>
+    <circle cx="166" cy="372" r="5"/>
+  </g>
+</svg>
