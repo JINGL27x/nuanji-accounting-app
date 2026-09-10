@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 简约笔记本图标：暖橙封面 + 米白内页 + 绿色书签 -->
+  <rect x="138" y="92" width="248" height="336" rx="40" fill="#FF8A5B"/>
+  <rect x="166" y="118" width="220" height="290" rx="26" fill="#FFF7EF"/>
+  <!-- 书签 -->
+  <path d="M300 118 v70 l-26 -22 -26 22 v-70 z" fill="#3ED35A"/>
+  <!-- 内页线条 -->
+  <g stroke="#FFD2BD" stroke-width="12" stroke-linecap="round">
+    <line x1="196" y1="186" x2="356" y2="186"/>
+    <line x1="196" y1="232" x2="356" y2="232"/>
+    <line x1="196" y1="278" x2="356" y2="278"/>
+    <line x1="196" y1="324" x2="312" y2="324"/>
+  </g>
+  <!-- 螺旋环 -->
+  <g fill="#FFF7EF">
+    <circle cx="138" cy="150" r="13"/>
+    <circle cx="138" cy="206" r="13"/>
+    <circle cx="138" cy="262" r="13"/>
+    <circle cx="138" cy="318" r="13"/>
+    <circle cx="138" cy="374" r="13"/>
+  </g>
+  <g fill="#FF8A5B">
+    <circle cx="138" cy="150" r="6"/>
+    <circle cx="138" cy="206" r="6"/>
+    <circle cx="138" cy="262" r="6"/>
+    <circle cx="138" cy="318" r="6"/>
+    <circle cx="138" cy="374" r="6"/>
+  </g>
+</svg>
