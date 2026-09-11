@@ -3,17 +3,23 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 // 安卓 App 内的 WebView 不支持 Web Speech API，
 // 此时用 App 注入的原生识别通道 window.AndroidSpeech（android.speech.SpeechRecognizer）
-const ASR = window.AndroidSpeech || null;
-const NATIVE = !!ASR && (typeof ASR.start === 'function');
+const ASR = (typeof window.AndroidSpeech !== 'undefined' && window.AndroidSpeech) || null;
 
-export const supported = !!SR || NATIVE;
+// 是否跑在自己的 App 里：注入对象优先，UA 里的 NuanjiApp 标识兜底
+const UA_TAG = /NuanjiApp\//.test(navigator.userAgent || '');
+export const inApp = !!ASR || UA_TAG;
+const NATIVE = !!ASR;
+
+export const supported = inApp || !!SR;
 
 // 错误码 → 人话提示
 const ERR_TEXT = {
   'unsupported': '这台设备没有可用的语音识别服务，请改用「手动记一笔」',
+  'no-engine': '这台手机没有语音识别引擎。请到「设置 → 语音助手 / 无障碍」里开启语音服务，或点「手动记一笔」',
+  'need-app': '语音记账要在「暖记账本」App 里用。你现在打开的是网页版，请回到桌面点「暖记账本」图标，或点「手动记一笔」',
   'error': '语音识别失败，请重试或改用手动记账',
-  'not-allowed': '麦克风权限被拒绝，请在浏览器地址栏允许麦克风',
-  'service-not-allowed': '麦克风权限被拒绝，请在浏览器地址栏允许麦克风',
+  'not-allowed': '麦克风权限被拒绝，请允许后再试',
+  'service-not-allowed': '麦克风权限被拒绝，请允许后再试',
   'audio-capture': '没检测到麦克风，请检查设备',
   'no-speech': '没听到声音，靠近麦克风再说一次',
   'aborted': '识别被中断，请再点一次麦克风',
@@ -24,6 +30,26 @@ const ERR_TEXT = {
   'start-failed': '启动失败，请重试',
 };
 export function errText(code) { return ERR_TEXT[code] || ('语音识别失败：' + code); }
+
+// 运行环境说明，供「我的 → 语音自检」显示
+export function envText() {
+  if (!inApp) {
+    return '当前运行环境：网页版（浏览器或"添加到主屏幕"）。这里没有语音识别引擎接口，语音记账用不了，请点桌面的「暖记账本」图标打开 App。';
+  }
+  try {
+    const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
+    const parts = [];
+    parts.push('运行环境：暖记账本 App v' + (d.ver || '?') + '（安卓 ' + (d.sdk || '?') + '）');
+    parts.push('麦克风权限：' + (d.mic ? '已授权 ✔' : '还没授权，第一次点麦克风时会弹窗问你'));
+    if (d.sys) parts.push('系统语音识别：可用 ✔');
+    else if (d.ondev) parts.push('离线语音识别：可用 ✔');
+    else if (d.intent) parts.push('系统语音输入界面：可用 ✔（会弹出系统听写框）');
+    else parts.push('语音识别引擎：没有 ✘ —— 需要到手机「设置」里开启语音服务');
+    return parts.join('\n');
+  } catch (_) {
+    return '运行环境：暖记账本 App（版本信息读取失败）';
+  }
+}
 
 // 预检麦克风权限，返回 'granted' | 'denied' | 'prompt' | 'unknown'
 export async function checkMic() {
@@ -70,7 +96,9 @@ function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
 export function listen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
   // 在 App 内一律走原生通道（WebView 里的 Web Speech API 多半只是摆设）
   if (NATIVE) return nativeListen({ lang, onPartial, onFinal, onError });
-  if (!SR) { onError && onError('unsupported'); return null; }
+  // 在 App 里（UA 有标识）却没拿到注入对象 → 说明是旧版 App，提示升级
+  if (UA_TAG) { onError && onError('no-engine'); return null; }
+  if (!SR) { onError && onError('need-app'); return null; }
   const rec = new SR();
   rec.lang = lang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
   let done = false;      // 已交付最终结果
