@@ -1,10 +1,17 @@
 // 语音识别 + 中文/英文 口语解析
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-export const supported = !!SR;
+
+// 安卓 App 内的 WebView 不支持 Web Speech API，
+// 此时用 App 注入的原生识别通道 window.AndroidSpeech（android.speech.SpeechRecognizer）
+const ASR = window.AndroidSpeech || null;
+const NATIVE = !SR && !!ASR && (typeof ASR.start === 'function');
+
+export const supported = !!SR || NATIVE;
 
 // 错误码 → 人话提示
 const ERR_TEXT = {
-  'unsupported': '当前浏览器不支持语音（请用 Chrome / Edge）',
+  'unsupported': '这台设备没有可用的语音识别服务，请改用「手动记一笔」',
+  'error': '语音识别失败，请重试或改用手动记账',
   'not-allowed': '麦克风权限被拒绝，请在浏览器地址栏允许麦克风',
   'service-not-allowed': '麦克风权限被拒绝，请在浏览器地址栏允许麦克风',
   'audio-capture': '没检测到麦克风，请检查设备',
@@ -20,6 +27,9 @@ export function errText(code) { return ERR_TEXT[code] || ('语音识别失败：
 
 // 预检麦克风权限，返回 'granted' | 'denied' | 'prompt' | 'unknown'
 export async function checkMic() {
+  if (NATIVE) {
+    try { return ASR.micState() || 'prompt'; } catch (_) { return 'prompt'; }
+  }
   try {
     if (navigator.permissions && navigator.permissions.query) {
       const s = await navigator.permissions.query({ name: 'microphone' });
@@ -29,7 +39,36 @@ export async function checkMic() {
   return 'unknown';
 }
 
+// 走 App 原生识别（AndroidSpeech.start / stop，结果通过 window.__asr 回调）
+function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
+  let finished = false;
+  window.__asr = {
+    onReady() {},
+    onPartial(t) { if (!finished && t) onPartial && onPartial(t); },
+    onFinal(t) {
+      if (finished) return;
+      finished = true;
+      if (t && String(t).trim()) onFinal && onFinal(String(t).trim());
+      else onError && onError('no-speech');
+    },
+    onError(code) {
+      if (finished) return;
+      finished = true;
+      onError && onError(code || 'error');
+    },
+  };
+  try {
+    ASR.start(lang);
+  } catch (_) {
+    window.__asr.onError('start-failed');
+  }
+  return {
+    stop() { finished = true; try { ASR.stop(); } catch (_) {} },
+  };
+}
+
 export function listen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
+  if (!SR && NATIVE) return nativeListen({ lang, onPartial, onFinal, onError });
   if (!SR) { onError && onError('unsupported'); return null; }
   const rec = new SR();
   rec.lang = lang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
