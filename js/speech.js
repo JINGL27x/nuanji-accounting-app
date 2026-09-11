@@ -29,7 +29,27 @@ const ERR_TEXT = {
   'no-device': '没检测到麦克风设备，请插上耳机或打开麦克风',
   'start-failed': '启动失败，请重试',
 };
-export function errText(code) { return ERR_TEXT[code] || ('语音识别失败：' + code); }
+/** 把 diag() 的探测结果翻译成一句短的"缺什么"，便于定位问题 */
+function diagSummary() {
+  try {
+    const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
+    const miss = [];
+    if (!d.sys) miss.push('系统语音服务');
+    if (!d.ondev) miss.push('离线识别');
+    if (!d.intent) miss.push('语音输入界面');
+    return miss.length ? ('App 探测不到：' + miss.join('、') + '（安卓 ' + d.sdk + '）') : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+export function errText(code) {
+  if (code === 'no-engine' && inApp) {
+    const s = diagSummary();
+    return ERR_TEXT['no-engine'] + (s ? '｜' + s : '');
+  }
+  return ERR_TEXT[code] || ('语音识别失败：' + code);
+}
 
 // 运行环境说明，供「我的 → 语音自检」显示
 export function envText() {
