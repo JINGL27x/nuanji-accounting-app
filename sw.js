@@ -11,7 +11,9 @@ const SHELL = [
   './js/charts.js',
   './js/format.js',
   './assets/icon.svg',
-  './assets/icon-maskable.svg'
+  './assets/icon-maskable.svg',
+  './assets/icon-512.png',
+  './assets/icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (e) => {
