@@ -27,7 +27,9 @@ const ERR_TEXT = {
   'bad-grammar': '识别出错，请重试',
   'language-not-supported': '该语言不支持，已改为中文',
   'no-device': '没检测到麦克风设备，请插上耳机或打开麦克风',
-  'start-failed': '手机的语音服务连不上。App 会自己改用系统语音输入框再试一次；若反复失败，请到「我的 → 语音识别自检」看看状态',
+  'start-failed': '手机的语音服务连不上，App 会自己换一条路再试一次；若反复失败，请到「我的 → 语音识别自检」看看状态',
+  'preparing': '语音引擎正在首次准备（大约十几秒），请稍等一下再点麦克风',
+  'vosk-err': '内置语音识别没能启动，请再点一次麦克风；若反复失败请到「我的 → 语音识别自检」',
 };
 /** 把 diag() 的探测结果翻译成一句短的"缺什么"，便于定位问题 */
 function diagSummary() {
@@ -35,12 +37,12 @@ function diagSummary() {
     const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
     const miss = [];
     if (!d.sys) miss.push('系统语音服务');
-    if (!d.ondev) miss.push('离线识别');
+    if (!d.ondev) miss.push('系统离线识别');
     if (!d.intent) miss.push('语音输入界面');
-    const tail = miss.length
+    if (d.vosk !== 1) miss.push('内置离线引擎');
+    return miss.length
       ? ('App 探测不到：' + miss.join('、') + '（安卓 ' + d.sdk + '）')
       : ('App v' + d.ver + '｜安卓 ' + d.sdk + '｜错误码 ' + (d.err || '无'));
-    return tail;
   } catch (_) {
     return '';
   }
@@ -57,17 +59,18 @@ export function errText(code) {
 // 运行环境说明，供「我的 → 语音自检」显示
 export function envText() {
   if (!inApp) {
-    return '当前运行环境：网页版（浏览器或"添加到主屏幕"）。这里没有语音识别引擎接口，语音记账用不了，请点桌面的「暖记账本」图标打开 App。';
+    return '当前运行环境：网页版（浏览器或"添加到主屏幕"）。这里没有语音识别接口，语音记账用不了，请点桌面的「暖记账本」图标打开 App。';
   }
   try {
     const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
     const parts = [];
     parts.push('运行环境：暖记账本 App v' + (d.ver || '?') + '（安卓 ' + (d.sdk || '?') + '）');
     parts.push('麦克风权限：' + (d.mic ? '已授权 ✔' : '还没授权，第一次点麦克风时会弹窗问你'));
-    if (d.sys) parts.push('系统语音识别：可用 ✔');
-    else if (d.ondev) parts.push('离线语音识别：可用 ✔');
-    else if (d.intent) parts.push('系统语音输入界面：可用 ✔（会弹出系统听写框）');
-    else parts.push('语音识别引擎：没有 ✘ —— 需要到手机「设置」里开启语音服务');
+    parts.push('手机自带语音服务：' + ((d.sys || d.ondev || d.intent) ? '有 ✔' : '没有（国产手机常见，不影响使用）'));
+    if (d.vosk === 1) parts.push('App 内置离线语音：就绪 ✔（不联网也能用）');
+    else if (d.vosk === 0) parts.push('App 内置离线语音：首次准备中，约十几秒');
+    else parts.push('App 内置离线语音：加载失败 ✘');
+    parts.push('语音记账是否可用：' + ((d.sys || d.ondev || d.intent || d.vosk === 1) ? '可以用 ✔' : '暂时用不了 ✘'));
     parts.push('最近一次错误码：' + (d.err || '无'));
     return parts.join('\n');
   } catch (_) {
