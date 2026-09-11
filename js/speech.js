@@ -27,7 +27,7 @@ const ERR_TEXT = {
   'bad-grammar': '识别出错，请重试',
   'language-not-supported': '该语言不支持，已改为中文',
   'no-device': '没检测到麦克风设备，请插上耳机或打开麦克风',
-  'start-failed': '启动失败，请重试',
+  'start-failed': '手机的语音服务连不上。App 会自己改用系统语音输入框再试一次；若反复失败，请到「我的 → 语音识别自检」看看状态',
 };
 /** 把 diag() 的探测结果翻译成一句短的"缺什么"，便于定位问题 */
 function diagSummary() {
@@ -37,7 +37,10 @@ function diagSummary() {
     if (!d.sys) miss.push('系统语音服务');
     if (!d.ondev) miss.push('离线识别');
     if (!d.intent) miss.push('语音输入界面');
-    return miss.length ? ('App 探测不到：' + miss.join('、') + '（安卓 ' + d.sdk + '）') : '';
+    const tail = miss.length
+      ? ('App 探测不到：' + miss.join('、') + '（安卓 ' + d.sdk + '）')
+      : ('App v' + d.ver + '｜安卓 ' + d.sdk + '｜错误码 ' + (d.err || '无'));
+    return tail;
   } catch (_) {
     return '';
   }
@@ -65,6 +68,7 @@ export function envText() {
     else if (d.ondev) parts.push('离线语音识别：可用 ✔');
     else if (d.intent) parts.push('系统语音输入界面：可用 ✔（会弹出系统听写框）');
     else parts.push('语音识别引擎：没有 ✘ —— 需要到手机「设置」里开启语音服务');
+    parts.push('最近一次错误码：' + (d.err || '无'));
     return parts.join('\n');
   } catch (_) {
     return '运行环境：暖记账本 App（版本信息读取失败）';
