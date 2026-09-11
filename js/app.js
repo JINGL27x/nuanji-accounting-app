@@ -101,7 +101,7 @@ async function renderRecord() {
   view.innerHTML = `
     <div class="mic-wrap">
       <button class="mic" id="mic">🎙️</button>
-      <div class="mic-hint">${speech.supported ? '点一下，说「午饭38」或「打车25块」' : '当前浏览器不支持语音，点下方手动记'}</div>
+      <div class="mic-hint">${speech.supported ? '点一下，说「午饭38」或「打车25块」' : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '网页版用不了语音，请点桌面「暖记账本」图标打开，或用下方「手动记一笔」')}</div>
       <div class="mic-transcript" id="transcript"></div>
     </div>
     <button class="btn ghost block mt16" id="manual">✏️ 手动记一笔</button>
@@ -125,7 +125,7 @@ async function renderRecord() {
   const tr = view.querySelector('#transcript');
   let ctrl = null;
   mic.addEventListener('click', async () => {
-    if (!speech.supported) { toast('当前浏览器不支持语音，请用 Chrome/Edge，或点「手动记一笔」'); return; }
+    if (!speech.supported) { toast(speech.inApp ? speech.errText('no-engine') : speech.errText('need-app')); return; }
     if (ctrl) { ctrl.stop(); mic.classList.remove('listening'); ctrl = null; return; }
     const perm = await speech.checkMic();
     if (perm === 'denied') { toast('麦克风权限被拒绝，请在地址栏允许后重试'); return; }
@@ -536,6 +536,11 @@ async function renderMe() {
       <div class="muted" style="font-size:12px;margin-top:10px">注：文件是给 app 用的，用记事本打开会是一堆代码，不用看懂；只要留好文件即可。</div>
       <input type="file" id="impFile" accept="application/json" hidden>
     </div>
+    <div class="card">
+      <div class="card-title">语音识别自检</div>
+      <div class="hint-line" id="asrInfo" style="white-space:pre-line">${speech.envText()}</div>
+      <button class="btn soft block" id="asrCheck">🔎 重新检测语音环境</button>
+    </div>
     <div class="card center">
       <div style="font-size:15px;font-weight:700">暖记 · 记账本</div>
       <div class="muted mt8">本地存储 · 语音记账 · 圆形统计<br>数据只存在你的手机，不上传。</div>
@@ -554,6 +559,12 @@ async function renderMe() {
     await db.setBudget('month', isNaN(m) ? '' : m);
     for (const inp of view.querySelectorAll('#catBudgets input')) { const v = parseFloat(inp.value); await db.setBudget(inp.dataset.bid, isNaN(v) ? '' : v); }
     toast('预算已保存'); router(); // 重绘，立刻显示进度条
+  };
+  view.querySelector('#asrCheck').onclick = () => {
+    const t = speech.envText();
+    const el = view.querySelector('#asrInfo');
+    if (el) el.textContent = t;
+    alert('语音自检结果：\n\n' + t);
   };
   view.querySelector('#exp').onclick = exportBackup;
   const impFile = view.querySelector('#impFile');
