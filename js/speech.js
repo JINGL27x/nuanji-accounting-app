@@ -4,7 +4,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 // 安卓 App 内的 WebView 不支持 Web Speech API，
 // 此时用 App 注入的原生识别通道 window.AndroidSpeech（android.speech.SpeechRecognizer）
 const ASR = window.AndroidSpeech || null;
-const NATIVE = !SR && !!ASR && (typeof ASR.start === 'function');
+const NATIVE = !!ASR && (typeof ASR.start === 'function');
 
 export const supported = !!SR || NATIVE;
 
@@ -68,7 +68,8 @@ function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
 }
 
 export function listen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
-  if (!SR && NATIVE) return nativeListen({ lang, onPartial, onFinal, onError });
+  // 在 App 内一律走原生通道（WebView 里的 Web Speech API 多半只是摆设）
+  if (NATIVE) return nativeListen({ lang, onPartial, onFinal, onError });
   if (!SR) { onError && onError('unsupported'); return null; }
   const rec = new SR();
   rec.lang = lang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
