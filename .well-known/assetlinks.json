@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "dev.pages.nuanji_accounting_app.twa",
+      "sha256_cert_fingerprints": [
+        "EC:C8:21:61:8F:50:34:42:6E:EB:9E:8D:FE:19:26:BE:BC:2F:BD:8C:0D:54:A9:D4:22:C5:1F:1E:C0:90:74:BA"
+      ]
+    }
+  }
+]
