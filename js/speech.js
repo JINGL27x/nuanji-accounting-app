@@ -12,6 +12,60 @@ const NATIVE = !!ASR;
 
 export const supported = inApp || !!SR;
 
+// ========== 语音纠错层（修复 Vosk 小模型常见误识别）==========
+// 原理：Vosk small-cn 模型对某些近音字/词容易混淆（尤其口语、方言口音），
+// 这里用「误识别→正确词」映射表做后处理，专注记账场景的高频词。
+const CORRECTIONS = [
+  // 交通类（最高频误识别）
+  [/法哥/g, '打车'], [/发哥/g, '打车'], [/法车/g, '打车'], [/搭车/g, '打车'],
+  [/弟铁/g, '地铁'], [/弟贴/g, '地铁'],
+  [/滴答/g, '滴滴'], [/滴滴/g, '滴滴'],  // 打车平台
+  [/油费/g, '加油'], [/加油站/g, '加油'],
+  [/停车费/g, '停车'], [/过路费/g, '过路'],
+  // 餐饮类
+  [/午犯/g, '午饭'], [/五饭/g, '午饭'], [/午范/g, '午饭'],
+  [/早翻/g, '早餐'], [/早饭/g, '早餐'],
+  [/晚翻/g, '晚饭'], [/晚餐/g, '晚饭'],
+  [/夜宵/g, '夜宵'], [/外卖/g, '外卖'], [/外买/g, '外卖'],
+  [/面条/g, '面条'], [/米线/g, '米线'],
+  [/火锅/g, '火锅'], [/咖啡/g, '咖啡'],
+  [/来查/g, '奶茶'], [/奶茶/g, '奶茶'],
+  [/零食/g, '零食'], [/小吃/g, '小吃'],
+  // 购物类
+  [/潮是/g, '超市'], [/超时/g, '超市'], [/买东西/g, '购物'],
+  [/淘宝/g, '淘宝'], [/京东/g, '京东'], [/拼夕夕/g, '拼多多'],
+  [/衣服/g, '衣服'], [/鞋子/g, '鞋子'],
+  // 居家/生活
+  [/房租/g, '房租'], [/水电费/g, '水电'], [/物业费/g, '物业'],
+  [/燃气/g, '燃气'], [/宽带/g, '宽带'],
+  // 娱乐
+  [/电影/g, '电影'], [/游戏/g, '游戏'], [/KTV/g, 'KTV'],
+  // 医疗
+  [/药费/g, '药费'], [/看病/g, '看病'], [/医院/g, '医院'],
+  // 教育
+  [/学费/g, '学费'], [/培训/g, '培训'], [/补习/g, '补习'],
+  // 收入类
+  [/工资/g, '工资'], [/薪水/g, '工资'], [/月薪/g, '工资'],
+  [/兼职/g, '兼职'], [/外快/g, '外快'],
+  [/理财/g, '理财'], [/利息/g, '利息'], [/基金/g, '基金'],
+  [/股票/g, '股票'], [/分红/g, '分红'],
+  // 通用动词/量词修正
+  [/花了/g, '花了'], [/花/g, '花'],
+  [/收入/g, '收入'], [/赚了/g, '赚'], [/进账/g, '进账'],
+  [/块钱/g, '块'], [/元钱/g, '元'], [/元/g, '元'],
+  [/今天/g, '今天'], [/昨天/g, '昨天'],
+];
+
+/** 对语音识别结果做纠错，返回修正后的文本 */
+export function correctText(raw) {
+  let t = String(raw || '');
+  for (const [re, replacement] of CORRECTIONS) {
+    t = t.replace(re, replacement);
+  }
+  return t;
+}
+// ========== 纠错层结束 ==========
+
 // 错误码 → 人话提示
 const ERR_TEXT = {
   'unsupported': '这台设备没有可用的语音识别服务，请改用「手动记一笔」',
@@ -103,7 +157,7 @@ function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
     onPartial(t) { if (!stopped && t) onPartial && onPartial(t); },
     onFinal(t) {
       if (stopped) return;
-      const s = String(t || '').trim();
+      const s = correctText(String(t || '')).trim(); // 纠错后再回调
       if (s) onFinal && onFinal(s); // 一句话识别完，累加到界面，但不结束监听
     },
     onError(code) {
@@ -144,7 +198,7 @@ export function listen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
     const combined = (final + interim).trim();
     if (combined) lastText = combined;
     if (interim) onPartial && onPartial(interim);
-    if (final) { done = true; onFinal && onFinal(final.trim()); }
+    if (final) { done = true; onFinal && onFinal(correctText(final).trim()); }
   };
   rec.onerror = (e) => {
     if (e.error === 'no-speech') lastText = ''; // 真没听到，清空兜底
@@ -156,7 +210,7 @@ export function listen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
     if (done || cancelled) return;
     // 关键修复：有些浏览器结束时最后一段仍是「中间结果」，
     // 此时用已累计听到的内容兜底，保证仍能弹出记录卡片。
-    onFinal && onFinal(lastText);
+    onFinal && onFinal(correctText(lastText));
   };
   try { rec.start(); } catch (_) { onError && onError('start-failed'); }
   return { stop() { cancelled = true; try { rec.stop(); } catch (_) {} } };
