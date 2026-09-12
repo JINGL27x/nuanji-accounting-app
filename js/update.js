@@ -6,6 +6,13 @@ const VERSION_URL = 'version.json';
 
 export const APP = (() => {
   const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  // 苹果设备：iPhone / iPad / iPod；iPadOS 13+ 的 UA 伪装成 Mac，靠触点数认出来
+  const ios = /iPhone|iPad|iPod/.test(ua)
+    || (/Macintosh/.test(ua) && (typeof navigator !== 'undefined' && (navigator.maxTouchPoints || 0) > 1));
+  // 从主屏幕图标启动（iOS 专属字段 window.navigator.standalone）
+  const standalone = ios
+    ? (typeof navigator !== 'undefined' && (navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches))
+    : false;
   let info = null;
   try {
     if (window.AndroidSpeech && window.AndroidSpeech.appInfo) {
@@ -15,10 +22,13 @@ export const APP = (() => {
   const inApp = !!(info && info.inApp) || /NuanjiApp\//.test(ua);
   const m = /NuanjiApp\/([\d.]+)/.exec(ua);
   return {
+    ios,
+    standalone,
     inApp,
     vc: info && info.vc != null ? Number(info.vc) : null,
     vn: (info && info.vn) || (m ? m[1] : null),
-    canInstallApk: !!(window.AndroidSpeech && window.AndroidSpeech.downloadAndInstall),
+    // 苹果上永远装不了安卓 APK（苹果不允许侧载）
+    canInstallApk: !ios && !!(window.AndroidSpeech && window.AndroidSpeech.downloadAndInstall),
   };
 })();
 
@@ -30,7 +40,9 @@ export function onChange(fn) { if (typeof fn === 'function') listeners.push(fn);
 function emit() { listeners.forEach((f) => { try { f(); } catch (_) { } }); }
 
 export function currentVersionText() {
-  return APP.vn ? 'v' + APP.vn : (APP.inApp ? '未知' : '网页版');
+  if (APP.vn) return 'v' + APP.vn;
+  if (APP.inApp) return '未知';
+  return APP.ios ? '网页版（iPhone 自动更新）' : '网页版';
 }
 
 export function latest() { return remote; }
@@ -48,6 +60,8 @@ function newerThan(a, b) {
 }
 
 export function hasUpdate() {
+  // iPhone / iPad 走的就是网页版，页面上永远是最新版，不存在「升级」这件事
+  if (APP.ios) return false;
   if (!remote) return false;
   // 首选 versionCode 精确比较
   if (APP.vc != null && remote.versionCode != null) return Number(remote.versionCode) > APP.vc;
@@ -86,6 +100,8 @@ export async function checkUpdate() {
 
 /** 开始更新：App 内下载并调起安装；网页版只能跳转下载；过老的 App 需手动装一次 */
 export function startUpdate() {
+  // 兜底：苹果设备绝不引导去下载 .apk（装了也打不开，白下载 25MB）
+  if (APP.ios) return 'ios';
   if (!remote || !remote.apk) return 'none';
   if (APP.canInstallApk) {
     window.AndroidSpeech.downloadAndInstall(remote.apk, remote.sha256 || '');
