@@ -66,7 +66,26 @@ function recordRow(r, cm) {
   const ph = r.photo ? `<img class="thumb" src="${r.photo}">` : `<span class="emoji">${c.emoji}</span>`;
   const sub = (r.note ? r.note + ' · ' : '') + c.name;
   const time = new Date(r.date).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  return `<div class="item">${ph}<div class="body"><div class="t">${sub}</div><div class="s">${time}</div></div><span class="amt ${cls}">${sign}${moneyShort(r.amount)}</span><button class="del" data-id="${r.id}">🗑️</button></div>`;
+  return `<div class="item">${ph}<div class="body"><div class="t">${sub}</div><div class="s">${time}</div></div><span class="amt ${cls}">${sign}${moneyShort(r.amount)}</span><button class="edit" data-id="${r.id}" title="修改">✏️</button><button class="del" data-id="${r.id}" title="删除">🗑️</button></div>`;
+}
+
+/** 给记录列表统一挂上「改 / 删」两个动作 */
+function wireRecordList(listEl) {
+  listEl.querySelectorAll('.del').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const id = b.getAttribute('data-id'); if (!id) return;
+    if (confirm('确定删除这条记录？')) { await db.deleteRecord(id); toast('已删除'); router(); }
+  }));
+  listEl.querySelectorAll('.edit').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const id = b.getAttribute('data-id'); if (!id) return;
+    const rec = (await db.getRecords()).find((x) => x.id === id);
+    if (!rec) { toast('这条记录找不到了'); return; }
+    openEntrySheet({
+      id: rec.id, amount: rec.amount, type: rec.type, categoryId: rec.categoryId,
+      note: rec.note, photo: rec.photo, date: rec.date, createdAt: rec.createdAt,
+    });
+  }));
 }
 
 // ---------- 路由 ----------
@@ -102,7 +121,7 @@ async function renderRecord() {
   view.innerHTML = `
     <div class="mic-wrap">
       <button class="mic" id="mic">🎙️</button>
-      <div class="mic-hint">${speech.supported ? '点一下开始听，说完再点一下记账；或长按说话、松手记账。如「午饭38」「打车25块」' : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '网页版用不了语音，请点桌面「暖记账本」图标打开，或用下方「手动记一笔」')}</div>
+      <div class="mic-hint">${speech.supported ? '点一下开始听，说完再点一下记账。<br>一笔一笔说：<b>「午饭38」</b>；也可以一口气说好几笔：<b>「打车25，午饭38，晚饭60」</b>' : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '网页版用不了语音，请点桌面「暖记账本」图标打开，或用下方「手动记一笔」')}</div>
       <div class="mic-transcript" id="transcript"></div>
     </div>
     <button class="btn ghost block mt16" id="manual">✏️ 手动记一笔</button>
@@ -276,8 +295,19 @@ function bindQuick(view, quicks) {
 }
 
 async function openEntryFromVoice(text) {
+  let cats = [];
+  try { cats = await db.getCategories(); } catch (_) { cats = []; }
+  // 先试「一句话多笔」：能切出 ≥2 笔就弹列表卡让用户逐条确认
+  let list = [];
+  try { list = speech.parseMulti(text, cats); } catch (_) { list = []; }
+  if (list.length > 1) { openVoiceListSheet(list, text); return; }
+  if (list.length === 1) {
+    const p = list[0];
+    openEntrySheet({ amount: p.amount, type: p.type, categoryId: p.categoryId, note: p.note || text });
+    return;
+  }
+  // 切不出笔（多半是没说到金额）→ 走原来的单笔逻辑
   try {
-    const cats = await db.getCategories();
     const p = speech.parse(text, cats);
     openEntrySheet({ amount: p.amount, type: p.type, categoryId: p.categoryId, note: text });
   } catch (err) {
@@ -286,15 +316,99 @@ async function openEntryFromVoice(text) {
   }
 }
 
+/** 一句话听出多笔 → 列表确认卡：每笔都能改分类 / 改金额 / 去掉，确认后一次性记下 */
+async function openVoiceListSheet(list, rawText) {
+  const all = await db.getAllCategories();
+  let rows = list.map((e, i) => ({ ...e, key: i }));
+
+  const optionsHTML = (sel) => {
+    const grp = (type, label) => '<optgroup label="' + label + '">' + all.filter((c) => c.type === type).map((c) =>
+      `<option value="${c.id}"${c.id === sel ? ' selected' : ''}>${c.emoji} ${c.name}${c.hidden ? '（已隐藏）' : ''}</option>`).join('') + '</optgroup>';
+    return grp('expense', '支出') + grp('income', '收入');
+  };
+  const rowHTML = (r) => `
+    <div class="vrow" data-key="${r.key}">
+      <div class="vmain">
+        <select class="vsel">${optionsHTML(r.categoryId)}</select>
+        <div class="vnote">${r.note ? r.note : '（没说是什么）'}</div>
+      </div>
+      <span class="vcur">¥</span><input class="vamt" inputmode="decimal" value="${r.amount}">
+      <button class="vdel" title="去掉这笔">✕</button>
+    </div>`;
+
+  const html = `
+    <h3>听到 ${rows.length} 笔，确认一下</h3>
+    <div class="hint-line">你说的：${rawText}<br>分类或金额不对可以直接改；不想要的点 ✕ 去掉。确认后一次全部记下。</div>
+    <div class="vlist" id="vlist">${rows.map(rowHTML).join('')}</div>
+    <div class="flex mt16">
+      <button class="btn soft" id="cancel">取消</button>
+      <button class="btn" id="save">全部记好 ✓</button>
+    </div>`;
+
+  openSheet(html, (root, close) => {
+    const listEl = root.querySelector('#vlist');
+    const bindRows = () => {
+      listEl.querySelectorAll('.vrow').forEach((rowEl) => {
+        const key = Number(rowEl.dataset.key);
+        const r = rows.find((x) => x.key === key); if (!r) return;
+        const sel = rowEl.querySelector('.vsel');
+        sel.addEventListener('change', () => {
+          const c = all.find((x) => x.id === sel.value);
+          r.categoryId = sel.value;
+          if (c) r.type = c.type;
+        });
+        rowEl.querySelector('.vamt').addEventListener('input', (e) => {
+          const v = parseFloat(e.target.value);
+          r.amount = isNaN(v) ? 0 : v;
+        });
+        rowEl.querySelector('.vdel').addEventListener('click', () => {
+          rows = rows.filter((x) => x.key !== key);
+          repaint();
+        });
+      });
+    };
+    const repaint = () => {
+      listEl.innerHTML = rows.length
+        ? rows.map(rowHTML).join('')
+        : '<div class="empty" style="padding:20px">都去掉了，点「取消」关掉就好</div>';
+      bindRows();
+    };
+    bindRows();
+    root.querySelector('#cancel').onclick = close;
+    root.querySelector('#save').onclick = async () => {
+      const ok = rows.filter((r) => Number(r.amount) > 0 && r.categoryId);
+      if (!ok.length) { toast('没有可记的条目'); return; }
+      const now = Date.now();
+      // date 逐条往回退 1 毫秒：既保证排序稳定，又能让「说的顺序」=「列表顺序」
+      for (let i = 0; i < ok.length; i++) {
+        const r = ok[i];
+        await db.addRecord({
+          id: uid(), type: r.type, amount: Math.round(Number(r.amount) * 100) / 100,
+          categoryId: r.categoryId, note: r.note || '', photo: null,
+          date: now - i, createdAt: now,
+        });
+      }
+      toast('已记下 ' + ok.length + ' 笔 ✓');
+      close(); router();
+    };
+  });
+}
+
 async function openEntrySheet(prefill = {}) {
   const cats = await db.getCategories();
+  const editing = !!prefill.id;                     // 带 id = 改一条已有记录
   let type = prefill.type || 'expense';
-  let amount = prefill.amount != null ? String(prefill.amount) : '';
+  let amount = prefill.amount != null && prefill.amount !== '' ? String(prefill.amount) : '';
   let catId = prefill.categoryId || (cats.find((c) => c.type === type) || {}).id;
   let note = prefill.note || '';
   let photo = prefill.photo || null;
+  const when = prefill.date || Date.now();          // 记到哪一天（日历「补一笔」会传过来）
+  const wd = new Date(when);
+  const isToday = dayKey(wd) === dayKey(new Date());
+  const dateLabel = isToday ? '今天' : `${wd.getMonth() + 1}月${wd.getDate()}日`;
   const html = `
-    <h3>记一笔</h3>
+    <h3>${editing ? '改一笔' : '记一笔'}</h3>
+    <div class="date-chip">📅 记到 ${dateLabel}</div>
     <div class="seg" id="typeSeg">
       <button data-t="expense" class="${type === 'expense' ? 'on' : ''}">支出</button>
       <button data-t="income" class="${type === 'income' ? 'on' : ''}">收入</button>
@@ -307,7 +421,7 @@ async function openEntrySheet(prefill = {}) {
     <div class="cat-grid" id="catGrid"></div>
     <div class="field mt16"><label>备注</label><textarea id="note" class="textarea" placeholder="说点什么…">${note}</textarea></div>
     <div class="field"><label>小票照片（可选）</label><input type="file" id="photo" accept="image/*" capture="environment"></div>
-    <div id="thumbBox" class="mt8"></div>
+    <div id="thumbBox" class="mt8">${photo ? `<img class="thumb" src="${photo}">` : ''}</div>
     <div class="flex mt16">
       <button class="btn soft" id="cancel">取消</button>
       <button class="btn" id="save">保存</button>
@@ -328,8 +442,13 @@ async function openEntrySheet(prefill = {}) {
       const amt = parseFloat(root.querySelector('#amt').value);
       if (!(amt > 0)) { toast('请输入金额'); return; }
       if (!catId) { toast('请选分类'); return; }
-      await db.addRecord({ id: uid(), type, amount: Math.round(amt * 100) / 100, categoryId: catId, note: root.querySelector('#note').value.trim(), photo, date: Date.now(), createdAt: Date.now() });
-      toast('已记下 ✓'); close(); router();
+      await db.addRecord({
+        id: prefill.id || uid(), type, amount: Math.round(amt * 100) / 100,
+        categoryId: catId, note: root.querySelector('#note').value.trim(), photo,
+        date: when, createdAt: prefill.createdAt || Date.now(),
+      });
+      toast(editing ? '已修改 ✓' : '已记下 ✓');
+      close(); router();
     };
   });
 }
@@ -439,10 +558,19 @@ async function renderDayDetail(view, records) {
   const sel = state.selDate || new Date();
   const weekName = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][sel.getDay()];
   const dateLabel = `${sel.getMonth() + 1}月${sel.getDate()}日 ${weekName}`;
-  box.innerHTML = `<div class="day-label">📌 ${dateLabel}</div><div class="day-sum">
+  box.innerHTML = `<div class="day-label"><span>📌 ${dateLabel}</span><button class="day-add" id="dayAdd">＋ 补一笔</button></div><div class="day-sum">
     <div class="box tap-box" data-dtype="expense"><div class="v exp-amt">${moneyShort(exp)}</div><div class="k">支出 ▾</div></div>
     <div class="box tap-box" data-dtype="income"><div class="v inc-amt">${moneyShort(inc)}</div><div class="k">收入 ▾</div></div>
   </div><div id="calDayList" class="rec-list" hidden></div>`;
+
+  // 「补一笔」：直接记到当前选中的这一天（昨天忘了记就能补上）
+  const addBtn = box.querySelector('#dayAdd');
+  if (addBtn) addBtn.onclick = () => {
+    const n = new Date();
+    const ts = new Date(sel.getFullYear(), sel.getMonth(), sel.getDate(), n.getHours(), n.getMinutes()).getTime();
+    openEntrySheet({ date: ts });
+  };
+
   const listEl = box.querySelector('#calDayList');
   let curFilter = 'all'; // all | expense | income | none
 
@@ -453,7 +581,7 @@ async function renderDayDetail(view, records) {
       b.querySelector('.k').textContent = (type === 'expense' ? '支出' : '收入') + (curFilter === type ? ' ▴' : ' ▾');
     });
     if (day.length === 0) {
-      listEl.innerHTML = `<div class="empty">这天还没有记录</div>`;
+      listEl.innerHTML = `<div class="empty">这天还没有记录<br><span style="font-size:12px">点上面的「＋ 补一笔」就能补上</span></div>`;
       listEl.hidden = false; return;
     }
     if (curFilter === 'none') { listEl.hidden = true; return; }
@@ -462,14 +590,7 @@ async function renderDayDetail(view, records) {
       listEl.innerHTML = `<div class="empty">暂无${curFilter === 'expense' ? '支出' : '收入'}记录</div>`;
     } else {
       listEl.innerHTML = `<div class="list">${filtered.map((r) => recordRow(r, cm)).join('')}</div>`;
-      listEl.querySelectorAll('.del').forEach((d) => {
-        d.addEventListener('click', async (e) => {
-          e.stopPropagation(); e.preventDefault();
-          const id = d.getAttribute('data-id');
-          if (!id) return;
-          if (confirm('确定删除这条记录？')) { await db.deleteRecord(id); toast('已删除'); router(); }
-        });
-      });
+      wireRecordList(listEl);
     }
     listEl.hidden = false;
   };
