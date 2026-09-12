@@ -110,6 +110,7 @@ const ERR_TEXT = {
   'start-failed': '手机的语音服务连不上，App 会自己换一条路再试一次；若反复失败，请到「我的 → 语音识别自检」看看状态',
   'preparing': '语音引擎正在首次准备（大约十几秒），请稍等一下再点麦克风',
   'vosk-err': '内置语音识别没能启动，请再点一次麦克风；若反复失败请到「我的 → 语音识别自检」',
+  'need-model': '语音引擎还没下载。到「我的 → 语音记账自检」点「下载语音引擎」就能用了（约 198MB，下载一次以后不再需要）',
 };
 /** 把 diag() 的探测结果翻译成一句短的"缺什么"，便于定位问题 */
 function diagSummary() {
@@ -147,20 +148,53 @@ export function envText() {
     const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
     const asrOk = d.asr === 1 || d.vosk === 1;
     const preparing = d.asr === 0 || d.vosk === 0;
+    const needModel = d.asr === 3;
     const usable = !!(d.sys || d.ondev || d.intent || asrOk);
+    const pct = Number(d.mPct || 0);
     const lines = [];
-    lines.push('语音记账：' + (usable ? '可以用 ✔' : (preparing ? '正在准备，稍等再试' : '暂时用不了 ✘')));
+    lines.push('语音记账：' + (usable ? '可以用 ✔'
+      : (needModel ? '要先下载语音引擎' : (preparing ? '正在装语音引擎，稍等' : '暂时用不了 ✘'))));
     if (usable) lines.push('点一下首页的麦克风，说完再点一下就好。');
-    else if (preparing) lines.push('第一次打开要先装好语音引擎，大约十几秒；装好以后不联网也能用。');
+    else if (needModel) {
+      lines.push('语音引擎还没下载（约 198MB，建议连 WiFi）。点下面的「下载语音引擎」，');
+      lines.push('下载一次以后就一直能用，以后不用再下，也不联网也能用。');
+    } else if (preparing) {
+      lines.push(pct > 0
+        ? '正在下载语音引擎，当前 ' + pct + '%。建议连 WiFi，中途别关 App。'
+        : '正在装语音引擎，稍等一下。');
+    }
     lines.push('麦克风：' + (d.mic ? '已允许 ✔' : '还没允许（第一次点麦克风时会弹窗问你）'));
     if (asrOk) lines.push('语音引擎：已装好，不联网也能用 ✔');
-    else if (preparing) lines.push('语音引擎：正在准备中…');
+    else if (needModel) lines.push('语音引擎：还没下载（约 198MB）');
+    else if (preparing) lines.push(pct > 0 ? '语音引擎：正在下载 ' + pct + '%…' : '语音引擎：准备中…');
     else lines.push('语音引擎：没装好 ✘');
-    if (!usable && !preparing) lines.push('别急，可以先点「手动记一笔」把账记上。若一直这样，把下面「详细诊断信息」截图发我。');
+    if (!usable && !preparing && !needModel) {
+      lines.push('别急，可以先点「手动记一笔」把账记上。若一直这样，把下面「详细诊断信息」截图发我。');
+    }
     return lines.join('\n');
   } catch (_) {
     return '暂时读不到语音状态，把 App 完全关掉再打开试试。';
   }
+}
+
+/** 是否还没下载语音模型（需要在界面上引导用户下载） */
+export function needModel() {
+  if (!inApp) return false;
+  try {
+    const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
+    return d.asr === 3;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 触发原生下载语音模型（约 198MB） */
+export function startModelDownload() {
+  if (ASR && typeof ASR.downloadModel === 'function') {
+    ASR.downloadModel();
+    return true;
+  }
+  return false;
 }
 
 // 技术诊断信息（默认收起，排障/反馈时复制给对方看）
@@ -377,4 +411,14 @@ export function parse(text, categories) {
     if (fallback) categoryId = fallback.id;
   }
   return { amount, type, categoryId, categoryName: bestName };
+}
+
+// 模型下载进度：原生侧下载外置语音模型时回调，用于自检页实时显示
+let modelProgressCb = null;
+export function onModelProgress(fn) { modelProgressCb = fn; }
+if (typeof window !== 'undefined') {
+  window.__nuanjiAsr = window.__nuanjiAsr || {};
+  window.__nuanjiAsr.onModel = function (pct) {
+    if (modelProgressCb) { try { modelProgressCb(Number(pct) || 0); } catch (_) { } }
+  };
 }
