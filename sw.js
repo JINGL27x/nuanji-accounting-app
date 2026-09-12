@@ -1,5 +1,5 @@
 // 暖记 · 记账本 Service Worker：缓存应用外壳，支持离线使用与「安装」。
-const CACHE = 'nuanji-v18';
+const CACHE = 'nuanji-v19';
 const SHELL = [
   './',
   './index.html',
