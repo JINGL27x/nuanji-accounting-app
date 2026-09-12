@@ -366,7 +366,7 @@ const INCOME_KW = {
   '兼职': ['兼职', '外快', '零工', '接单'],
   '理财': ['理财', '利息', '基金', '股票', '分红', '收益', '股息'],
 };
-const INCOME_TYPE_KW = ['收入', '工资', '赚', '进账', '入账', '奖金', '分红', '利息'];
+const INCOME_TYPE_KW = ['收入', '工资', '赚', '进账', '入账', '奖金', '分红', '利息', '收'];
 
 export function parse(text, categories) {
   const t = (text || '').toLowerCase();
@@ -406,11 +406,218 @@ export function parse(text, categories) {
     const c = categories.find((x) => x.type === type && x.name === bestName && !x.hidden);
     if (c) categoryId = c.id;
   }
-  if (!categoryId) {
-    const fallback = categories.find((x) => x.type === type && !x.hidden);
-    if (fallback) categoryId = fallback.id;
-  }
+  if (!categoryId) categoryId = catIdFor(categories, type, null);
   return { amount, type, categoryId, categoryName: bestName };
+}
+
+// ========== 判分类的公共零件（parse / parseMulti 共用）==========
+/** 给一段文字打分，选出命中最狠的分类名 */
+function bestCat(text, type) {
+  const map = type === 'income' ? INCOME_KW : EXPENSE_KW;
+  let name = null, score = 0;
+  for (const nm in map) {
+    let s = 0;
+    for (const kw of map[nm]) if (text.includes(kw)) s += kw.length; // 长关键词权重更高
+    if (s > score) { score = s; name = nm; }
+  }
+  return { name, score };
+}
+/** 这段文字是收入还是支出 */
+function typeOf(text) {
+  return INCOME_TYPE_KW.some((k) => text.includes(k)) ? 'income' : 'expense';
+}
+/** 分类名 → 分类 id；认不出就兜底「其他 / 其他收入」，再兜底该类型第一个可见分类 */
+function catIdFor(categories, type, name) {
+  if (name) {
+    const c = categories.find((x) => x.type === type && x.name === name && !x.hidden);
+    if (c) return c.id;
+  }
+  const other = categories.find((x) => x.type === type && !x.hidden && (x.name === '其他' || x.name === '其他收入'));
+  if (other) return other.id;
+  const f = categories.find((x) => x.type === type && !x.hidden);
+  return f ? f.id : null;
+}
+
+// ========== 一句话多笔 ==========
+// 场景：「今天打车花了25元，中午吃饭花38，晚上吃饭60」→ 一次记 3 笔。
+// 难点：本 App 的离线模型**一个标点都不吐**，所以不能按逗号切；改成**拿金额当锚点**切：
+//   每个金额 + 它前面那段话 = 一笔。
+// 又因为模型吐的是中文数字（二十五），且日期/时间/量词也长成数字样，必须先剔干净，否则会多切出「9月」「3点」「两斤」这种假笔。
+
+// 时间词：帮我们理解，但不属于「消费项目」，判分类前先剥掉
+// （不剥的话，「中午」里的「午」、「今天」里的「天」会干扰分类）
+const TIME_WORDS = [
+  '今天', '昨天', '前天', '明天', '后天', '今晚', '昨晚', '今早', '今儿', '当天', '这天',
+  '早上', '早晨', '一早', '上午', '中午', '下午', '傍晚', '晚上', '夜里', '夜晚', '凌晨', '半夜', '刚刚', '刚才',
+  '周一', '周二', '周三', '周四', '周五', '周六', '周日', '周天',
+  '星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日', '星期天',
+];
+// 口语连接词 / 口头语：剥掉，既不影响分类，也能让备注干净
+const CONNECT_WORDS = [
+  '还有', '另外', '然后', '接着', '此外', '以及', '加上', '再加', '再就是', '最后', '之后', '顺便', '对了', '其中',
+  '那个', '这个', '大概', '差不多', '我', '你', '他', '她', '在', '就', '也', '还', '又', '再',
+];
+// 总结词：出现这些词又没说具体项目 → 是在报总数，不是新的一笔
+const TOTAL_WORDS = ['一共', '总共', '合计', '总计', '共花', '累计', '算下来'];
+// 项目词首尾常挂的动词/助词/单位，做备注时剥掉（备注要短、要像「打车」「吃饭」）
+const TRIM_WORDS = [
+  '花了', '花掉', '花费', '花', '付了', '付款', '付', '买了', '买', '给了', '给', '用了', '用', '点了',
+  '充了', '充', '交了', '交', '收到', '收了', '收', '赚了', '赚', '入账', '进账', '支出', '消费',
+  '块钱', '元钱',
+];
+const CN_NUM = '零一二两三四五六七八九十百千万亿';
+const TIME_AFTER = '年月日号点時时秒';                 // 紧跟这些 → 是时间，不是钱
+const MEASURE_AFTER = '个次杯份斤张只件盒瓶碗袋颗人天周月岁遍趟包条位套双米克升顿下些阵番场回通口'; // 紧跟这些 → 是数量
+const MONEY_AFTER = '元块钱毛角';                      // 紧跟这些 → 是钱（块=元）
+// 紧跟这些 → 数字只是词语的一部分（千万别、一起、一定、一样…），不是金额
+const WORD_AFTER = '别共起定样直会向同如并致切些般';
+// 前面是这些 → 是概数（几十、上百、好几千），不是确切金额
+const APPROX_BEFORE = '几数好上成';
+
+/** 剥掉时间词/连接词/标点/「9月10号」「下午3点」这类时间表达 */
+function stripNoise(s) {
+  let t = String(s || '');
+  for (const w of TIME_WORDS) t = t.split(w).join('');
+  for (const w of CONNECT_WORDS) t = t.split(w).join('');
+  t = t.replace(/[，,、。.；;：:！!？?…\s]+/g, '');                                  // 标点直接去掉
+  t = t.replace(/[0-9零一二两三四五六七八九十百千万]+(月|日|号|點|点|时|時|分|秒)/g, ''); // 时间表达
+  return t;
+}
+/** 反复剥掉首尾的动词/助词/连接词/标点，剩下的当备注 */
+function trimNoise(s) {
+  let t = String(s || '').trim();
+  let changed = true;
+  while (changed && t) {
+    changed = false;
+    const before = t;
+    t = t.replace(/^[，,、。.；;：:！!？?…\s—–-]+/, '').replace(/[，,、。.；;：:！!？?…\s—–-]+$/, '');
+    for (const w of TRIM_WORDS.concat(CONNECT_WORDS)) {
+      if (t.startsWith(w)) { t = t.slice(w.length); changed = true; }
+      if (t.endsWith(w)) { t = t.slice(0, -w.length); changed = true; }
+    }
+    t = t.trim();
+    if (t !== before) changed = true;
+  }
+  return t;
+}
+
+/** 扫出句子里的「金额」候选（带位置）；剔除时间/数量/概数，并合并零头「三十八块五 → 38.5」 */
+function findAmounts(s) {
+  const out = [];
+  const re = new RegExp('[0-9]+(?:\\.[0-9]{1,2})?[万千亿]?|[' + CN_NUM + ']+', 'g');
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    const tok = m[0];
+    const start = m.index, end = re.lastIndex;
+    const after = s.slice(end, end + 1);
+    const before = s.slice(start - 1, start);
+    // 孤立的一个「一 / 两」多半是词语的一部分（一共、一起、两点…）：只有后跟「元/块/毛/角」才算钱
+    if ((tok === '一' || tok === '两') && !(after && MONEY_AFTER.includes(after))) continue;
+    if (after && TIME_AFTER.includes(after)) continue;    // 日期 / 时间（9月10号、3点）
+    if (after && MEASURE_AFTER.includes(after)) continue; // 数量（三个人、两斤、五次）
+    if (after && WORD_AFTER.includes(after)) continue;    // 词语（千万别、一起）
+    if (before && APPROX_BEFORE.includes(before)) continue; // 概数（几十、上百）
+    let val;
+    if (/^[0-9]/.test(tok)) {
+      val = parseFloat(tok);
+      const u = tok.slice(-1);
+      if (u === '万') val *= 10000;
+      else if (u === '千') val *= 1000;
+      else if (u === '亿') val *= 100000000;
+    } else {
+      val = cnTokenToNum(tok);
+    }
+    if (!(val > 0)) continue;
+    out.push({ start, end, val, money: !!(after && MONEY_AFTER.includes(after)) });
+  }
+  // 合并零头：三十八块五 → 38.5、「25块5」→ 25.5
+  for (let i = 0; i < out.length - 1; i++) {
+    const a = out[i], b = out[i + 1];
+    const mid = s.slice(a.end, a.end + 1);
+    const tail = s.slice(b.end, b.end + 1); // 可能是 ''（句尾）
+    if (a.end === b.start - 1 && (mid === '块' || mid === '元')
+      && b.val > 0 && b.val < 10 && (b.end - b.start) === 1
+      && !(tail && TIME_AFTER.includes(tail))) {
+      a.val = Math.round((a.val + b.val / 10) * 100) / 100;
+      a.end = b.end; a.money = true;
+      out.splice(i + 1, 1); i--;
+    }
+  }
+  return out;
+}
+
+/**
+ * 一句话 → 多笔。
+ * 返回 [{ amount, type, categoryId, categoryName, note, catOk }]；一笔都切不出来就返回 []。
+ * 调用方约定：返回 [] 时请回落到老的 parse()（单笔逻辑）。
+ */
+export function parseMulti(text, categories) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const amts = findAmounts(raw);
+  if (!amts.length) return [];
+
+  // 先把每笔的「金额前的话 / 金额后的话」切好
+  const segs = [];
+  let prevEnd = 0;
+  for (let i = 0; i < amts.length; i++) {
+    const a = amts[i];
+    let ce = a.end;
+    if (raw[ce] === '块' || raw[ce] === '元') { ce++; if (raw[ce] === '钱') ce++; } // 连「块钱」一起吃
+    else if (raw[ce] === '毛' || raw[ce] === '角') ce++;
+    const nextStart = i + 1 < amts.length ? amts[i + 1].start : raw.length;
+    segs.push({
+      amount: a.val,
+      leadRaw: raw.slice(prevEnd, a.start),                  // 金额前的话（先说项目后说钱）
+      afterRaw: raw.slice(ce, Math.max(ce, nextStart)),      // 金额后的话（先报钱再说项目）
+    });
+    prevEnd = ce;
+  }
+
+  // 判定整句话的语序：只有当第一笔「金额前」几乎没话（如「25块打车…」）时才认为
+  // 是「先报钱再说项目」的倒装；否则一律按最常见的「先说项目后说钱」处理。
+  // 这样「25块打车38块吃饭」和「还了信用卡两千交水电费三百」不会互相串。
+  const hitOf = (s) => { const t = stripNoise(s); return bestCat(t, typeOf(t)); };
+  const firstLead = stripNoise(segs[0].leadRaw);
+  let order = 'lead';
+  if (firstLead.length <= 3 && !hitOf(segs[0].leadRaw).name && hitOf(segs[0].afterRaw).name) order = 'after';
+
+  const drafts = [];
+  for (let i = 0; i < segs.length; i++) {
+    const sg = segs[i];
+    const isLast = i === segs.length - 1;
+    const primary = order === 'after' ? sg.afterRaw : sg.leadRaw;
+    // 只有「属于本笔」的那一侧才能兜底：
+    //   先项目后金额 → 金额后的话属于下一笔（只有最后一笔的句尾是空闲的）
+    //   先金额后项目 → 金额前的话属于上一笔（只有第一笔的句首是空闲的）
+    const backup = order === 'after' ? (i === 0 ? sg.leadRaw : '') : (isLast ? sg.afterRaw : '');
+    let ctx = stripNoise(primary), type = typeOf(ctx), hit = bestCat(ctx, type);
+    if (!hit.name && backup) {
+      const ctx2 = stripNoise(backup), t2 = typeOf(ctx2), h2 = bestCat(ctx2, t2);
+      if (h2.name) { ctx = ctx2; type = t2; hit = h2; }
+    }
+    drafts.push({
+      amount: sg.amount,
+      type,
+      categoryName: hit.name,
+      catOk: !!hit.name,
+      note: trimNoise(ctx).slice(0, 12),
+      isTotal: TOTAL_WORDS.some((w) => primary.includes(w)) && !hit.name,
+    });
+  }
+
+  // 「一共/总共」报总数的那一段：只要还切出了别的笔，就丢掉它（避免记重复）
+  let list = drafts.length > 1 ? drafts.filter((d) => !d.isTotal) : drafts;
+  if (!list.length) return [];
+  list = list.slice(0, 8); // 一句话最多记 8 笔，防止识别噪声切出一堆
+  return list.map((d) => ({
+    amount: d.amount,
+    type: d.type,
+    categoryId: catIdFor(categories, d.type, d.categoryName),
+    categoryName: d.categoryName,
+    note: d.note,
+    catOk: d.catOk,
+  }));
 }
 
 // 模型下载进度：原生侧下载外置语音模型时回调，用于自检页实时显示
