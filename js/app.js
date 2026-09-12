@@ -121,7 +121,10 @@ async function renderRecord() {
   view.innerHTML = `
     <div class="mic-wrap">
       <button class="mic" id="mic">🎙️</button>
-      <div class="mic-hint">${speech.supported ? '点一下开始听，说完再点一下记账。<br>一笔一笔说：<b>「午饭38」</b>；也可以一口气说好几笔：<b>「打车25，午饭38，晚饭60」</b>' : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '网页版用不了语音，请点桌面「暖记账本」图标打开，或用下方「手动记一笔」')}</div>
+      <div class="mic-hint">${speech.supported ? (update.APP.ios
+        ? '点一下开始说，说完停一下会自动结束并弹出卡片。<br>iPhone 上<b>一次说一笔</b>最准：<b>「午饭38」</b>'
+        : '点一下开始听，说完再点一下记账。<br>一笔一笔说：<b>「午饭38」</b>；也可以一口气说好几笔：<b>「打车25，午饭38，晚饭60」</b>')
+        : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '这台手机 / 浏览器用不了语音，请点下方「手动记一笔」记上')}</div>
       <div class="mic-transcript" id="transcript"></div>
     </div>
     <button class="btn ghost block mt16" id="manual">✏️ 手动记一笔</button>
@@ -681,6 +684,23 @@ function catManageRows(cats) {
       <button class="del" data-delcat="${c.id}">🗑️</button>
     </div>`).join('');
 }
+// iPhone／iPad：苹果不让装 apk，网页版就是「iPhone 版」——给一张「添加到主屏幕」的引导卡。
+// 已经是从桌面图标打开的（standalone）就没什么要教的了，返回空串。
+function iosInstallCard() {
+  if (update.APP.standalone) return '';
+  const site = location.origin + '/';
+  return `<div class="card">
+      <div class="card-title">把「暖记账本」装到 iPhone 桌面</div>
+      <div class="hint-line">iPhone 不用下安装包，这个网页就是 iPhone 版。按下面三步把它放到桌面，以后点图标打开：全屏、有图标、断网也能记账，跟 App 一样。</div>
+      <ol class="steps">
+        <li>用 <b>Safari</b> 打开这个网址：<br><span class="site-url">${site}</span><br><span class="muted">微信 / QQ 里直接点开是不行的：先点右上角「···」→「用默认浏览器打开」。</span></li>
+        <li>点屏幕<b>最下面中间</b>的「分享」按钮 <b>⬆</b>（方框里一支箭头）。</li>
+        <li>菜单里往下滑，点 <b>「添加到主屏幕」</b> → 右上角 <b>「添加」</b>。</li>
+      </ol>
+      <div class="muted" style="font-size:12px;margin-top:10px">加好之后桌面就多一个「暖记账本」图标，原来那个 Safari 页面可以关掉。账目只存在你手机里，加了桌面图标才不会被系统自动清掉。</div>
+    </div>`;
+}
+
 async function renderMe() {
   const cats = await db.getAllCategories();
   const expCats = cats.filter((c) => c.type === 'expense');
@@ -740,10 +760,11 @@ async function renderMe() {
       <div class="muted" style="font-size:12px;margin-top:10px">注：文件是给 app 用的，用记事本打开会是一堆代码，不用看懂；只要留好文件即可。</div>
       <input type="file" id="impFile" accept="application/json" hidden>
     </div>
+    ${update.APP.ios ? iosInstallCard() : ''}
     <div class="card">
       <div class="card-title">版本更新</div>
-      <div class="hint-line" id="updInfo">当前版本 ${update.currentVersionText()}</div>
-      <button class="btn soft block ${update.hasUpdate() ? 'has-update' : ''}" id="updCheck">${update.hasUpdate() ? '发现新版本，点此更新' : '检查更新'}</button>
+      <div class="hint-line" id="updInfo" style="white-space:pre-line"></div>
+      ${update.APP.ios ? '' : `<button class="btn soft block ${update.hasUpdate() ? 'has-update' : ''}" id="updCheck">${update.hasUpdate() ? '发现新版本，点此更新' : '检查更新'}</button>`}
     </div>
     <div class="card">
       <div class="card-title">语音记账自检</div>
@@ -811,7 +832,15 @@ async function renderMe() {
       updBtn.textContent = has ? '发现新版本，点此更新' : '检查更新';
       updBtn.classList.toggle('has-update', has);
     }
-    if (updInfo) updInfo.textContent = has
+    if (!updInfo) return;
+    // 苹果设备：没有「更新」这回事，页面本身永远是最新的
+    if (update.APP.ios) {
+      updInfo.textContent = update.APP.standalone
+        ? '你用的是 iPhone 桌面版。\n它和网页是同一份，我们一改你这边立刻就是最新，不用你手动更新。'
+        : 'iPhone 版就是网页版，不用下载安装包，也永远是最新的。\n照上面的步骤加到桌面，就是常驻的 App 了。';
+      return;
+    }
+    updInfo.textContent = has
       ? update.updateNotes()
       : ('当前版本 ' + update.currentVersionText() + '，已经是最新的了');
   };
@@ -830,7 +859,7 @@ async function renderMe() {
     toast('下载失败，请稍后重试');
   });
 
-  updBtn.onclick = async () => {
+  if (updBtn) updBtn.onclick = async () => {
     if (update.hasUpdate()) { doUpdate(); return; }
     updBtn.textContent = '检查中…';
     const r = await update.checkUpdate();
@@ -841,7 +870,8 @@ async function renderMe() {
   };
 
   // 打开「我的」时自动静默检查一次，有新版本按钮就会亮红点
-  update.checkUpdate().then(renderUpd).catch(() => { });
+  // （苹果上没有「更新」这个概念，不必去拉 version.json）
+  if (!update.APP.ios) update.checkUpdate().then(renderUpd).catch(() => { });
   view.querySelector('#exp').onclick = exportBackup;
   const impFile = view.querySelector('#impFile');
   view.querySelector('#imp').onclick = () => impFile.click();
@@ -929,18 +959,32 @@ async function exportCSV() {
   rows.push(['结余', '', '', '', (totalInc - totalExp).toFixed(2), '']);
   const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const ios = saveBlob(blob, `暖记账目_${dayKey(new Date())}.csv`);
+  toast(ios ? '已导出。iPhone 上若没反应，改用 Safari 打开本站（别用桌面图标）再导出一次'
+    : '已导出，用 Excel / WPS 打开即可');
+}
+
+// 存文件：把 blob 下载到本机。
+// iOS 的 Safari 不认「没挂到文档里」的 <a>，会一声不响什么都不做 —— 必须先 append 再点。
+// 返回是否处于苹果设备（调用方据此给不同的提示语）。
+function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `暖记账目_${dayKey(new Date())}.csv`; a.click();
-  URL.revokeObjectURL(url);
-  toast('已导出，用 Excel / WPS 打开即可');
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  // 别马上 revoke：Safari 是异步去取这个 blob 的，立刻释放会拿到空文件
+  setTimeout(() => { try { a.remove(); } catch (_) { } URL.revokeObjectURL(url); }, 6000);
+  return !!update.APP.ios;
 }
 
 async function exportBackup() {
   const data = await db.exportAll();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `暖记备份_${dayKey(new Date())}.json`; a.click();
-  URL.revokeObjectURL(url); toast('已导出，请把文件转存到自己那边保管');
+  const ios = saveBlob(blob, `暖记备份_${dayKey(new Date())}.json`);
+  toast(ios ? '已导出。iPhone 上若没反应，改用 Safari 打开本站（别用桌面图标）再试'
+    : '已导出，请把文件转存到自己那边保管');
 }
 async function importBackup(e) {
   const f = e.target.files[0]; if (!f) return;
