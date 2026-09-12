@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import * as speech from './speech.js';
+import * as update from './update.js';
 import { donutSVG } from './charts.js';
 import { money, moneyShort, dayKey, parseDayKey, rangeFor, monthRange, rangeLabel, uid } from './format.js';
 
@@ -178,6 +179,15 @@ async function renderRecord() {
   mic.addEventListener('pointerdown', async (e) => {
     e.preventDefault();
     if (!speech.supported) { toast(speech.inApp ? speech.errText('no-engine') : speech.errText('need-app')); return; }
+    if (speech.needModel()) {
+      if (confirm('语音引擎还没下载（约 198MB，建议连 WiFi）。\n'
+        + '下载一次以后就不用再下，而且以后不联网也能用。\n\n现在下载吗？')) {
+        if (speech.startModelDownload()) toast('开始下载，请留在本页面别关 App');
+      } else {
+        toast('也可以先点「手动记一笔」');
+      }
+      return;
+    }
     pressing = true; longArmed = false;
     try { mic.setPointerCapture(e.pointerId); } catch (_) {}
     pressTimer = setTimeout(async () => {
@@ -610,8 +620,14 @@ async function renderMe() {
       <input type="file" id="impFile" accept="application/json" hidden>
     </div>
     <div class="card">
+      <div class="card-title">版本更新</div>
+      <div class="hint-line" id="updInfo">当前版本 ${update.currentVersionText()}</div>
+      <button class="btn soft block ${update.hasUpdate() ? 'has-update' : ''}" id="updCheck">${update.hasUpdate() ? '发现新版本，点此更新' : '检查更新'}</button>
+    </div>
+    <div class="card">
       <div class="card-title">语音记账自检</div>
       <div class="hint-line" id="asrInfo" style="white-space:pre-line">${speech.envText()}</div>
+      <button class="btn soft block mt16" id="asrDl" ${speech.needModel() ? '' : 'hidden'}>⬇ 下载语音引擎（约 198MB）</button>
       <details class="tech-box" style="margin-top:10px">
         <summary>详细诊断信息</summary>
         <div class="hint-line" id="asrTech" style="white-space:pre-line;margin-top:8px">${speech.envTech()}</div>
@@ -643,13 +659,97 @@ async function renderMe() {
     const te = view.querySelector('#asrTech'); if (te) te.textContent = speech.envTech();
     alert('语音自检结果：\n\n' + t);
   };
+
+  // 语音模型下载：引导 + 进度
+  const dlBtn = view.querySelector('#asrDl');
+  if (dlBtn) dlBtn.onclick = () => {
+    if (!confirm('语音引擎约 198MB，建议在 WiFi 下下载。\n'
+      + '下载一次以后就不用再下了，而且以后不联网也能用。\n\n现在开始下载吗？')) return;
+    if (speech.startModelDownload()) {
+      dlBtn.hidden = true;
+      toast('开始下载语音引擎，请留在本页面');
+    } else {
+      toast('请把 App 更新到最新版后再试');
+    }
+  };
+
+  // 语音模型正在下载时，自检卡片实时刷新进度
+  speech.onModelProgress(() => {
+    const el = view.querySelector('#asrInfo');
+    if (el) el.textContent = speech.envText();
+    const te = view.querySelector('#asrTech'); if (te) te.textContent = speech.envTech();
+    const b = view.querySelector('#asrDl'); if (b) b.hidden = !speech.needModel();
+  });
+
+  // ---------- 版本更新 ----------
+  const updBtn = view.querySelector('#updCheck');
+  const updInfo = view.querySelector('#updInfo');
+  const renderUpd = () => {
+    const has = update.hasUpdate();
+    if (updBtn) {
+      updBtn.textContent = has ? '发现新版本，点此更新' : '检查更新';
+      updBtn.classList.toggle('has-update', has);
+    }
+    if (updInfo) updInfo.textContent = has
+      ? update.updateNotes()
+      : ('当前版本 ' + update.currentVersionText() + '，已经是最新的了');
+  };
+  renderUpd();
+  update.onChange(renderUpd);
+
+  update.onInstallProgress((pct) => {
+    if (updInfo) updInfo.textContent = '正在下载新版本… ' + pct + '%\n请留在本页面，下载完会自动弹出安装界面';
+  });
+  update.onInstallDone(() => {
+    if (updInfo) updInfo.textContent = '下载完成，请在弹出的界面点「安装」\n（覆盖升级，账目不会丢）';
+    toast('下载完成，请点「安装」');
+  });
+  update.onInstallError((m) => {
+    if (updInfo) updInfo.textContent = '下载失败：' + m + '\n请检查网络后重试';
+    toast('下载失败，请稍后重试');
+  });
+
+  updBtn.onclick = async () => {
+    if (update.hasUpdate()) { doUpdate(); return; }
+    updBtn.textContent = '检查中…';
+    const r = await update.checkUpdate();
+    renderUpd();
+    if (!r.ok) { toast(r.error || '检查失败，请稍后再试'); return; }
+    if (update.hasUpdate()) { toast('发现新版本 ' + (update.latest().versionName || '')); doUpdate(); }
+    else toast('已经是最新版本 ' + update.currentVersionText());
+  };
+
+  // 打开「我的」时自动静默检查一次，有新版本按钮就会亮红点
+  update.checkUpdate().then(renderUpd).catch(() => { });
   view.querySelector('#exp').onclick = exportBackup;
   const impFile = view.querySelector('#impFile');
   view.querySelector('#imp').onclick = () => impFile.click();
   impFile.onchange = importBackup;
 }
-async function openAddCat() {
-  let type = 'expense', color = COLOR_SW[0], emoji = '📌';
+// 应用内更新：确认后交给原生下载并调起系统安装界面
+function doUpdate() {
+  const notes = update.updateNotes();
+  const url = update.apkUrl();
+
+  // 装不了的情况：网页版打开，或 App 版本太老（v3.3 之前的包没有下载安装能力）
+  if (!update.APP.canInstallApk) {
+    const tip = update.APP.inApp
+      ? '你现在这个版本的 App 还不支持「应用内一键更新」，需要手动装一次新版本。'
+        + '装好这一次以后，以后就能在 App 里直接更新了。'
+      : '你现在用的是网页版，没法直接安装，需要在浏览器里下载后手动安装。';
+    alert('发现新版本：\n\n' + notes + '\n\n' + tip + '\n\n下载地址：\n' + url);
+    return;
+  }
+
+  if (!confirm('发现新版本：\n\n' + notes
+    + '\n\n下载完成后会弹出系统的安装界面，点「安装」就能覆盖升级。'
+    + '你的账目数据会原样保留，不会丢。\n\n现在开始下载吗？')) return;
+
+  update.startUpdate();
+  toast('开始下载，请留在本页面');
+}
+
+async function openAddCat() {  let type = 'expense', color = COLOR_SW[0], emoji = '📌';
   const html = `<h3>添加分类</h3>
     <div class="seg" id="tseg"><button data-t="expense" class="on">支出</button><button data-t="income">收入</button></div>
     <div class="field"><label>名称</label><input id="cn" class="input" placeholder="如：保险"></div>
