@@ -371,3 +371,14 @@ body {
 .tech-box > summary::-webkit-details-marker { display: none; }
 .tech-box > summary::before { content: '▸'; font-size: 10px; transition: transform .15s; }
 .tech-box[open] > summary::before { transform: rotate(90deg); }
+
+/* 「检查更新」有新版本：红点 + 高亮 */
+.btn.has-update { position: relative; background: var(--accent-soft); color: var(--accent-deep); }
+.btn.has-update::after {
+  content: ''; position: absolute; top: 9px; right: 16px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--surface-2);
+  animation: dotPulse 1.6s ease-in-out infinite;
+}
+@keyframes dotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
