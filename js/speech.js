@@ -141,6 +141,16 @@ export function errText(code) {
 // 给用户看的「一句话体检」，先说结论，再说原因和建议
 export function envText() {
   if (!inApp) {
+    // 苹果的 Safari（含「添加到主屏幕」后）自带 webkitSpeechRecognition，
+    // 所以网页版在 iPhone 上是能语音记账的，别一律报「用不了」。
+    if (SR) {
+      return '语音记账：可以用 ✔（用的是苹果自带的语音识别）\n'
+        + '点一下首页的麦克风开始说，停一下会自动结束并弹出记账卡片；'
+        + '想中途停就再点一下麦克风。\n'
+        + '第一次点会弹窗问麦克风权限，点「允许」。\n'
+        + '小提示：苹果的识别是联网的，一次说一句最准；一口气说好几笔容易听漏，'
+        + '建议一句一句来，或者用下面的「手动记一笔」。';
+    }
     return '你现在打开的是网页版，语音记账用不了。\n'
       + '回到手机桌面，点「暖记账本」图标打开 App 就能用了。';
   }
@@ -199,7 +209,12 @@ export function startModelDownload() {
 
 // 技术诊断信息（默认收起，排障/反馈时复制给对方看）
 export function envTech() {
-  if (!inApp) return '当前不在 App 里运行（网页版）。';
+  if (!inApp) {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+    const stand = typeof navigator !== 'undefined' && navigator.standalone === true;
+    return '当前不在 App 里运行（网页版' + (ios ? ' · ' + (stand ? '已加到主屏幕' : 'Safari 里打开') : '') + '）。'
+      + '\n平台：' + (ios ? 'iOS' : '其他') + '｜浏览器语音识别：' + (SR ? '有' : '没有');
+  }
   try {
     const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
     const PATH_NAME = { sherpa: 'App 内置离线引擎', sys: '手机系统语音服务', ondev: '手机离线识别', intent: '系统语音输入界面' };
