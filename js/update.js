@@ -88,7 +88,7 @@ export async function checkUpdate() {
 export function startUpdate() {
   if (!remote || !remote.apk) return 'none';
   if (APP.canInstallApk) {
-    window.AndroidSpeech.downloadAndInstall(remote.apk);
+    window.AndroidSpeech.downloadAndInstall(remote.apk, remote.sha256 || '');
     return 'app';
   }
   if (APP.inApp) return 'old-app';
