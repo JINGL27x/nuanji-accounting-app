@@ -428,3 +428,30 @@ body {
   font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-pill);
 }
 .day-add:active { transform: scale(.95); }
+
+/* iPhone「添加到主屏幕」引导卡 */
+.steps { margin: 2px 0 0; padding-left: 20px; }
+.steps li { font-size: 13px; line-height: 1.75; color: var(--ink-soft); margin-bottom: 10px; }
+.steps li:last-child { margin-bottom: 0; }
+.steps li b { color: var(--ink); }
+.site-url {
+  display: inline-block; margin: 3px 0 1px; padding: 3px 9px;
+  background: var(--surface-2); border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; color: var(--accent-deep); word-break: break-all;
+}
+
+/* ===== 苹果设备适配 ===== */
+:root {
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+/* Safari 的地址栏放在 100vh 里，会让底部内容顶到工具栏后面；dvh 是真实可视高度 */
+#app { min-height: 100dvh; }
+/* 横屏时刘海/圆角跑到左右两边，卡片左右要留出安全区（矮屏基本就是横屏手机） */
+@media (orientation: landscape) and (max-height: 520px) {
+  :root { --tabbar-h: 58px; --appbar-h: 46px; }
+  #appbar { padding-left: var(--safe-l); padding-right: var(--safe-r); }
+  .view { padding-left: calc(16px + var(--safe-l)); padding-right: calc(16px + var(--safe-r)); padding-top: 4px; }
+  .tabbar { padding-left: var(--safe-l); padding-right: var(--safe-r); }
+}
