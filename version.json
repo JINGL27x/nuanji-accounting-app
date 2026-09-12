@@ -1,0 +1,8 @@
+{
+  "versionCode": 11,
+  "versionName": "3.3",
+  "apk": "https://nuanji-accounting-app.pages.dev/nuanji-latest.apk",
+  "size": 25585816,
+  "sha256": "8626a88cca4888685dcdf5ce97813dccc0f2df023a179bbb910b1cdbccb6f67b",
+  "notes": "安装包瘦身到 24MB（语音引擎首次使用时下载一次）；「我的」新增检查更新，可在 App 内一键下载安装新版本，数据保留。"
+}
