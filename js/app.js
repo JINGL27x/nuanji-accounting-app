@@ -959,15 +959,28 @@ async function exportCSV() {
   rows.push(['结余', '', '', '', (totalInc - totalExp).toFixed(2), '']);
   const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const ios = saveBlob(blob, `暖记账目_${dayKey(new Date())}.csv`);
-  toast(ios ? '已导出。iPhone 上若没反应，改用 Safari 打开本站（别用桌面图标）再导出一次'
-    : '已导出，用 Excel / WPS 打开即可');
+  const how = await saveBlob(blob, `暖记账目_${dayKey(new Date())}.csv`);
+  toast(how === 'app' ? '已存到手机「下载」目录，去文件管理里找'
+    : how === 'ios' ? '已导出。iPhone 上若没反应，改用 Safari 打开本站（别用桌面图标）再导出一次'
+      : '已导出，用 Excel / WPS 打开即可');
 }
 
-// 存文件：把 blob 下载到本机。
-// iOS 的 Safari 不认「没挂到文档里」的 <a>，会一声不响什么都不做 —— 必须先 append 再点。
-// 返回是否处于苹果设备（调用方据此给不同的提示语）。
-function saveBlob(blob, filename) {
+// 存文件：把 blob 落到本机。返回落盘方式，调用方据此给不同的提示语。
+//   'app' → 交给安卓 App 原生写进系统「下载」目录（最稳）
+//   'ios' → 浏览器下载，且是苹果设备（iOS 的限制要看提示处理）
+//   'web' → 普通浏览器下载
+// 两个必须注意的点：
+//   ① iOS 的 Safari 不认「没挂到文档里」的 <a>，会一声不响什么都不做 —— 必须先 append 再点。
+//   ② 安卓 App 的 WebView 没设 DownloadListener，网页的 <a download> 点了不会产出任何文件，
+//      所以 App 内一律改走原生桥 AndroidSpeech.saveFile（App v3.4+ 才有）。
+async function saveBlob(blob, filename) {
+  const bridge = (typeof window !== 'undefined') && window.AndroidSpeech;
+  if (update.APP.inApp && bridge && typeof bridge.saveFile === 'function') {
+    try {
+      const b64 = await blobToBase64(blob);
+      if (bridge.saveFile(filename, blob.type || 'application/octet-stream', b64)) return 'app';
+    } catch (_) { /* 桥不在或失败了，退回浏览器那套 */ }
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename; a.rel = 'noopener';
@@ -976,15 +989,28 @@ function saveBlob(blob, filename) {
   a.click();
   // 别马上 revoke：Safari 是异步去取这个 blob 的，立刻释放会拿到空文件
   setTimeout(() => { try { a.remove(); } catch (_) { } URL.revokeObjectURL(url); }, 6000);
-  return !!update.APP.ios;
+  return update.APP.ios ? 'ios' : 'web';
+}
+
+function blobToBase64(blob) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const s = String(fr.result || '');
+      res(s.slice(s.indexOf(',') + 1)); // 去掉 data:xxx;base64, 前缀
+    };
+    fr.onerror = () => rej(fr.error || new Error('read failed'));
+    fr.readAsDataURL(blob);
+  });
 }
 
 async function exportBackup() {
   const data = await db.exportAll();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const ios = saveBlob(blob, `暖记备份_${dayKey(new Date())}.json`);
-  toast(ios ? '已导出。iPhone 上若没反应，改用 Safari 打开本站（别用桌面图标）再试'
-    : '已导出，请把文件转存到自己那边保管');
+  const how = await saveBlob(blob, `暖记备份_${dayKey(new Date())}.json`);
+  toast(how === 'app' ? '已存到手机「下载」目录，把这个文件发给自己留着'
+    : how === 'ios' ? '已导出。iPhone 上若没反应，改用 Safari 打开本站（别用桌面图标）再试'
+      : '已导出，请把文件转存到自己那边保管');
 }
 async function importBackup(e) {
   const f = e.target.files[0]; if (!f) return;
