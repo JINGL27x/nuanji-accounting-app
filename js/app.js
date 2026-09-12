@@ -733,11 +733,16 @@ function doUpdate() {
 
   // 装不了的情况：网页版打开，或 App 版本太老（v3.3 之前的包没有下载安装能力）
   if (!update.APP.canInstallApk) {
-    const tip = update.APP.inApp
-      ? '你现在这个版本的 App 还不支持「应用内一键更新」，需要手动装一次新版本。'
-        + '装好这一次以后，以后就能在 App 里直接更新了。'
-      : '你现在用的是网页版，没法直接安装，需要在浏览器里下载后手动安装。';
-    alert('发现新版本：\n\n' + notes + '\n\n' + tip + '\n\n下载地址：\n' + url);
+    if (!update.APP.inApp) {
+      if (confirm('发现新版本：\n\n' + notes
+        + '\n\n你现在用的是网页版，没法直接安装，需要在浏览器里下载后再安装。\n\n现在打开下载页吗？')) {
+        window.open(url, '_blank');
+      }
+      return;
+    }
+    alert('发现新版本：\n\n' + notes
+      + '\n\n你现在这个版本的 App 还不支持「应用内一键更新」，需要手动装一次新版本。'
+      + '装好这一次以后，以后就能在 App 里直接更新了。\n\n下载地址：\n' + url);
     return;
   }
 
