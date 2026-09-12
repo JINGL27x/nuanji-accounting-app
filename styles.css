@@ -138,6 +138,7 @@ body {
 }
 .mic:active { transform: scale(.95); }
 .mic.listening { animation: pulse 1.3s infinite; background: radial-gradient(circle at 50% 38%, #FF8A5B, var(--accent-deep)); }
+.mic.holding { transform: scale(1.06); background: radial-gradient(circle at 50% 38%, #FF6F3C, var(--accent-deep)); box-shadow: 0 0 0 8px rgba(255,111,60,.28), 0 14px 34px rgba(255,138,91,.5); }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(255,138,91,.45); }
   70% { box-shadow: 0 0 0 26px rgba(255,138,91,0); }
