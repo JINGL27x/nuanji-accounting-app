@@ -382,3 +382,50 @@ body {
   animation: dotPulse 1.6s ease-in-out infinite;
 }
 @keyframes dotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+
+/* ---------- 一句话多笔：确认列表 ---------- */
+.vlist { display: flex; flex-direction: column; gap: 10px; max-height: 46vh; overflow-y: auto; }
+.vrow {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border-radius: var(--radius-sm);
+  padding: 10px 12px; box-shadow: var(--shadow-sm);
+}
+.vrow .vmain { flex: 1; min-width: 0; }
+.vrow .vsel {
+  width: 100%; border: none; background: none; padding: 0; margin: 0;
+  font-size: 15px; font-weight: 700; color: var(--ink); outline: none;
+  -webkit-appearance: none; appearance: none;
+}
+.vrow .vnote { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vrow .vcur { color: var(--muted); font-size: 15px; font-weight: 700; flex: none; }
+.vrow .vamt {
+  width: 74px; flex: none; text-align: right; border: none; background: none; outline: none;
+  font-size: 17px; font-weight: 800; color: var(--accent-deep);
+  border-bottom: 1.5px solid var(--line);
+}
+.vrow .vamt:focus { border-bottom-color: var(--accent); }
+.vrow .vdel {
+  flex: none; border: none; background: var(--surface-2); color: var(--ink-soft);
+  width: 28px; height: 28px; border-radius: 50%; font-size: 13px; cursor: pointer;
+}
+.vrow .vdel:active { transform: scale(.9); }
+
+/* 「记到哪一天」提示条 */
+.date-chip {
+  display: inline-block; background: var(--accent-soft); color: var(--accent-deep);
+  font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: var(--radius-pill);
+  margin-bottom: 12px;
+}
+
+/* 记录行上的「修改」按钮，以及金额不被挤扁 */
+.item .edit { border: none; background: none; color: var(--muted); font-size: 15px; cursor: pointer; padding: 6px; }
+.item .amt { flex: none; }
+
+/* 日历里的「＋ 补一笔」 */
+.day-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.day-add {
+  flex: none; border: none; cursor: pointer;
+  background: var(--accent-soft); color: var(--accent-deep);
+  font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-pill);
+}
+.day-add:active { transform: scale(.95); }
