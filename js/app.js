@@ -124,41 +124,54 @@ async function renderRecord() {
   const mic = view.querySelector('#mic');
   const tr = view.querySelector('#transcript');
   let ctrl = null;          // 当前监听控制器（null = 未听）
-  let acc = '';             // 累计听到的文本（跨多句话）
+  let acc = '';             // 本次听写的临时文本
+  let ending = false;       // 已点停止，正在等最终结果
   let pressing = false;     // 手指/鼠标是否正按着
   let longArmed = false;    // 是否已判定为「长按说话」
   let pressTimer = null;
+  let endTimer = null;
   const LONG_MS = 260;      // 超过此时长视为长按，否则视为单击
 
-  function renderTr() { tr.textContent = acc ? ('已听到：' + acc) : '在听…（说中文或英文）'; }
+  function reset() {
+    clearTimeout(endTimer);
+    ctrl = null; ending = false; acc = '';
+    mic.classList.remove('listening', 'holding');
+  }
 
   function startListening() {
     if (ctrl) return;
-    acc = '';
+    acc = ''; ending = false;
     mic.classList.add('listening');
-    renderTr();
+    tr.textContent = '在听…（说中文或英文）';
     ctrl = speech.listen({
       lang: 'zh-CN',
-      // 实时结果：已累计文本 + 当前这句的临时稿
-      onPartial: (p) => { tr.textContent = (acc ? acc + ' ' : '') + p; },
-      // 一句话识别完：追加到累计 + **立刻弹卡**（麦克风保持继续听，可连续说多笔）
+      // 实时结果（边说边出字）
+      onPartial: (p) => { if (!ending && p) tr.textContent = (acc ? acc + ' ' : '') + p; },
+      // 最终结果：停止后到达一次（可能是空串）
       onFinal: (f) => {
-        acc = acc ? acc + ' ' + f : f;
-        renderTr();
-        const text = acc.trim();
-        if (text) openEntryFromVoice(text); // 每句完都弹卡，用户可直接保存或关掉继续说
+        const text = String(f || acc || '').trim();
+        reset();
+        tr.textContent = '';
+        if (text) openEntryFromVoice(text); // 出结果 → 弹记账卡
       },
-      onError: (e) => { const had = !!acc.trim(); stopListening(had); if (!had) toast(speech.errText(e)); },
+      onError: (e) => {
+        const had = !!String(acc || '').trim();
+        reset();
+        tr.textContent = '';
+        if (!had) toast(speech.errText(e));
+      },
     });
   }
-  function stopListening(submit) {
-    if (ctrl) { try { ctrl.stop(); } catch (_) {} ctrl = null; }
+  function stopListening() {
+    if (!ctrl) { reset(); tr.textContent = ''; return; }
+    ending = true;
     mic.classList.remove('listening', 'holding');
-    // 停止时一定要清掉「在听…」文字（问题1修复）
-    acc = '';
-    tr.textContent = '';
-    // 如果停止时还有未提交的累计文本，补弹一次卡
-    if (submit && tr.textContent !== '' && false) { /* 已在 onFinal 里逐句弹了 */ }
+    tr.textContent = '识别中…';
+    const c = ctrl; ctrl = null;
+    try { c.stop(); } catch (_) {}
+    // 兜底：2.5 秒还没等到最终结果就复位，避免卡在「识别中…」
+    clearTimeout(endTimer);
+    endTimer = setTimeout(() => { if (ending) { reset(); tr.textContent = ''; } }, 2500);
   }
 
   // 指针事件统一处理鼠标 + 触摸，并区分「单击切换」与「长按说话」
@@ -174,7 +187,7 @@ async function renderRecord() {
       if (!ctrl) {
         const perm = await speech.checkMic();
         if (perm === 'denied') { toast('麦克风权限被拒绝，请在系统设置里允许后重试'); pressing = false; longArmed = false; mic.classList.remove('holding'); return; }
-        startListening(); // 长按开始持续听
+        startListening(); // 长按开始听
       }
     }, LONG_MS);
   });
@@ -184,15 +197,19 @@ async function renderRecord() {
     clearTimeout(pressTimer);
     if (longArmed) {
       longArmed = false; mic.classList.remove('holding');
-      stopListening(true); // 松手：提交听到的内容
-    } else if (ctrl) {
-      stopListening(true); // 单击（已在听）：再点一下 → 提交/复位
+      stopListening();                 // 长按松手 → 出结果
+    } else if (ctrl || ending) {
+      stopListening();                 // 单击（已在听）→ 再点一下出结果
     } else {
-      startListening();    // 单击（未听）：开始持续听
+      startListening();                // 单击（未听）→ 开始听
     }
   }
   mic.addEventListener('pointerup', onRelease);
-  mic.addEventListener('pointercancel', () => { pressing = false; clearTimeout(pressTimer); if (longArmed) { longArmed = false; mic.classList.remove('holding'); stopListening(true); } });
+  mic.addEventListener('pointercancel', () => {
+    if (!pressing) return;
+    pressing = false; clearTimeout(pressTimer);
+    if (longArmed) { longArmed = false; mic.classList.remove('holding'); }
+  });
   view.querySelector('#manual').addEventListener('click', () => openEntrySheet({}));
 
   // 支出/收入卡片点击展开记录
