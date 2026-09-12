@@ -610,9 +610,13 @@ async function renderMe() {
       <input type="file" id="impFile" accept="application/json" hidden>
     </div>
     <div class="card">
-      <div class="card-title">语音识别自检</div>
+      <div class="card-title">语音记账自检</div>
       <div class="hint-line" id="asrInfo" style="white-space:pre-line">${speech.envText()}</div>
-      <button class="btn soft block" id="asrCheck">🔎 重新检测语音环境</button>
+      <details class="tech-box" style="margin-top:10px">
+        <summary>详细诊断信息</summary>
+        <div class="hint-line" id="asrTech" style="white-space:pre-line;margin-top:8px">${speech.envTech()}</div>
+      </details>
+      <button class="btn soft block mt16" id="asrCheck">🔎 重新检测</button>
     </div>
     <div class="card center">
       <div style="font-size:15px;font-weight:700">暖记 · 记账本</div>
@@ -635,8 +639,8 @@ async function renderMe() {
   };
   view.querySelector('#asrCheck').onclick = () => {
     const t = speech.envText();
-    const el = view.querySelector('#asrInfo');
-    if (el) el.textContent = t;
+    const el = view.querySelector('#asrInfo'); if (el) el.textContent = t;
+    const te = view.querySelector('#asrTech'); if (te) te.textContent = speech.envTech();
     alert('语音自检结果：\n\n' + t);
   };
   view.querySelector('#exp').onclick = exportBackup;
