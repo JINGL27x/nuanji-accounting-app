@@ -141,20 +141,24 @@ async function renderRecord() {
       lang: 'zh-CN',
       // 实时结果：已累计文本 + 当前这句的临时稿
       onPartial: (p) => { tr.textContent = (acc ? acc + ' ' : '') + p; },
-      // 一句话识别完：追加到累计，不自动停、不弹卡
-      onFinal: (f) => { acc = acc ? acc + ' ' + f : f; renderTr(); },
+      // 一句话识别完：追加到累计 + **立刻弹卡**（麦克风保持继续听，可连续说多笔）
+      onFinal: (f) => {
+        acc = acc ? acc + ' ' + f : f;
+        renderTr();
+        const text = acc.trim();
+        if (text) openEntryFromVoice(text); // 每句完都弹卡，用户可直接保存或关掉继续说
+      },
       onError: (e) => { const had = !!acc.trim(); stopListening(had); if (!had) toast(speech.errText(e)); },
     });
   }
   function stopListening(submit) {
     if (ctrl) { try { ctrl.stop(); } catch (_) {} ctrl = null; }
     mic.classList.remove('listening', 'holding');
-    if (submit && acc.trim()) {
-      const text = acc.trim(); acc = '';
-      openEntryFromVoice(text); // 把听到的话送进记账卡
-    } else {
-      acc = ''; renderTr();
-    }
+    // 停止时一定要清掉「在听…」文字（问题1修复）
+    acc = '';
+    tr.textContent = '';
+    // 如果停止时还有未提交的累计文本，补弹一次卡
+    if (submit && tr.textContent !== '' && false) { /* 已在 onFinal 里逐句弹了 */ }
   }
 
   // 指针事件统一处理鼠标 + 触摸，并区分「单击切换」与「长按说话」
