@@ -101,7 +101,7 @@ async function renderRecord() {
   view.innerHTML = `
     <div class="mic-wrap">
       <button class="mic" id="mic">🎙️</button>
-      <div class="mic-hint">${speech.supported ? '点一下，说「午饭38」或「打车25块」' : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '网页版用不了语音，请点桌面「暖记账本」图标打开，或用下方「手动记一笔」')}</div>
+      <div class="mic-hint">${speech.supported ? '点一下开始听，说完再点一下记账；或长按说话、松手记账。如「午饭38」「打车25块」' : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '网页版用不了语音，请点桌面「暖记账本」图标打开，或用下方「手动记一笔」')}</div>
       <div class="mic-transcript" id="transcript"></div>
     </div>
     <button class="btn ghost block mt16" id="manual">✏️ 手动记一笔</button>
@@ -123,20 +123,72 @@ async function renderRecord() {
     </div>`;
   const mic = view.querySelector('#mic');
   const tr = view.querySelector('#transcript');
-  let ctrl = null;
-  mic.addEventListener('click', async () => {
-    if (!speech.supported) { toast(speech.inApp ? speech.errText('no-engine') : speech.errText('need-app')); return; }
-    if (ctrl) { ctrl.stop(); mic.classList.remove('listening'); ctrl = null; return; }
-    const perm = await speech.checkMic();
-    if (perm === 'denied') { toast('麦克风权限被拒绝，请在地址栏允许后重试'); return; }
-    mic.classList.add('listening'); tr.textContent = '在听…（说中文或英文）';
+  let ctrl = null;          // 当前监听控制器（null = 未听）
+  let acc = '';             // 累计听到的文本（跨多句话）
+  let pressing = false;     // 手指/鼠标是否正按着
+  let longArmed = false;    // 是否已判定为「长按说话」
+  let pressTimer = null;
+  const LONG_MS = 260;      // 超过此时长视为长按，否则视为单击
+
+  function renderTr() { tr.textContent = acc ? ('已听到：' + acc) : '在听…（说中文或英文）'; }
+
+  function startListening() {
+    if (ctrl) return;
+    acc = '';
+    mic.classList.add('listening');
+    renderTr();
     ctrl = speech.listen({
       lang: 'zh-CN',
-      onPartial: (p) => { tr.textContent = p; },
-      onFinal: (f) => { mic.classList.remove('listening'); ctrl = null; if (f) { tr.textContent = f; openEntryFromVoice(f); } },
-      onError: (e) => { mic.classList.remove('listening'); ctrl = null; tr.textContent = ''; toast(speech.errText(e)); },
+      // 实时结果：已累计文本 + 当前这句的临时稿
+      onPartial: (p) => { tr.textContent = (acc ? acc + ' ' : '') + p; },
+      // 一句话识别完：追加到累计，不自动停、不弹卡
+      onFinal: (f) => { acc = acc ? acc + ' ' + f : f; renderTr(); },
+      onError: (e) => { const had = !!acc.trim(); stopListening(had); if (!had) toast(speech.errText(e)); },
     });
+  }
+  function stopListening(submit) {
+    if (ctrl) { try { ctrl.stop(); } catch (_) {} ctrl = null; }
+    mic.classList.remove('listening', 'holding');
+    if (submit && acc.trim()) {
+      const text = acc.trim(); acc = '';
+      openEntryFromVoice(text); // 把听到的话送进记账卡
+    } else {
+      acc = ''; renderTr();
+    }
+  }
+
+  // 指针事件统一处理鼠标 + 触摸，并区分「单击切换」与「长按说话」
+  mic.addEventListener('pointerdown', async (e) => {
+    e.preventDefault();
+    if (!speech.supported) { toast(speech.inApp ? speech.errText('no-engine') : speech.errText('need-app')); return; }
+    pressing = true; longArmed = false;
+    try { mic.setPointerCapture(e.pointerId); } catch (_) {}
+    pressTimer = setTimeout(async () => {
+      if (!pressing) return;
+      longArmed = true;
+      mic.classList.add('holding');
+      if (!ctrl) {
+        const perm = await speech.checkMic();
+        if (perm === 'denied') { toast('麦克风权限被拒绝，请在系统设置里允许后重试'); pressing = false; longArmed = false; mic.classList.remove('holding'); return; }
+        startListening(); // 长按开始持续听
+      }
+    }, LONG_MS);
   });
+  function onRelease() {
+    if (!pressing) return;
+    pressing = false;
+    clearTimeout(pressTimer);
+    if (longArmed) {
+      longArmed = false; mic.classList.remove('holding');
+      stopListening(true); // 松手：提交听到的内容
+    } else if (ctrl) {
+      stopListening(true); // 单击（已在听）：再点一下 → 提交/复位
+    } else {
+      startListening();    // 单击（未听）：开始持续听
+    }
+  }
+  mic.addEventListener('pointerup', onRelease);
+  mic.addEventListener('pointercancel', () => { pressing = false; clearTimeout(pressTimer); if (longArmed) { longArmed = false; mic.classList.remove('holding'); stopListening(true); } });
   view.querySelector('#manual').addEventListener('click', () => openEntrySheet({}));
 
   // 支出/收入卡片点击展开记录
