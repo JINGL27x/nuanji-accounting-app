@@ -12,6 +12,13 @@ const NATIVE = !!ASR;
 
 export const supported = inApp || !!SR;
 
+// 苹果设备：iPhone / iPad / iPod；iPadOS 13+ 的 UA 伪装成 Mac，靠触点数认出来
+export const APPLE_MOBILE = (() => {
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  if (/iPhone|iPad|iPod/.test(ua)) return true;
+  return /Macintosh/.test(ua) && (typeof navigator !== 'undefined' && (navigator.maxTouchPoints || 0) > 1);
+})();
+
 // ========== 第 1 层：重复字清理（修「卡带」）==========
 // 现象：流式神经网络模型在噪声、轻声、停顿处会「卡带」——同一个字连着吐好几遍。
 //   实测例子：「打车二十五元」→「打车车二二十五元」
@@ -145,11 +152,10 @@ export function envText() {
     // 所以网页版在 iPhone 上是能语音记账的，别一律报「用不了」。
     if (SR) {
       return '语音记账：可以用 ✔（用的是苹果自带的语音识别）\n'
-        + '点一下首页的麦克风开始说，停一下会自动结束并弹出记账卡片；'
-        + '想中途停就再点一下麦克风。\n'
+        + '点一下首页的麦克风开始说，说完再点一下它就替你记上。\n'
+        + '中间可以停一下再接着说，能连着记好几笔。\n'
         + '第一次点会弹窗问麦克风权限，点「允许」。\n'
-        + '小提示：苹果的识别是联网的，一次说一句最准；一口气说好几笔容易听漏，'
-        + '建议一句一句来，或者用下面的「手动记一笔」。';
+        + '注意：苹果这套是要联网的，不像安卓版那样完全离线。';
     }
     return '你现在打开的是网页版，语音记账用不了。\n'
       + '回到手机桌面，点「暖记账本」图标打开 App 就能用了。';
@@ -286,6 +292,167 @@ export function listen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
   // 在 App 里（UA 有标识）却没拿到注入对象 → 说明是旧版 App，提示升级
   if (UA_TAG) { onError && onError('no-engine'); return null; }
   if (!SR) { onError && onError('need-app'); return null; }
+  // 苹果设备：Safari 的 Web Speech API 会「假死」且不报错，得专门伺候（见 appleListen）
+  if (APPLE_MOBILE) return appleListen({ lang, onPartial, onFinal, onError });
+  return webListen({ lang, onPartial, onFinal, onError });
+}
+
+// ===== 苹果专用：连续听写 =====
+// Safari 的 Web Speech API 有三个坑，而且**没有一个会报错**，所以必须自己补一层：
+//   ① continuous=false 并不会在静音时真正停止（WebKit 里它只管「要不要清空历史」），
+//      所以其实能一直听 —— 这反而让「一口气说好几笔」成为可能。
+//   ② transcript 累积太久会被限流、开始识别不准。
+//   ③ 最要命的「假死」：识别到一半突然不吐字了，既不触发 onend 也不触发 onerror，
+//      地址栏麦克风图标还亮着，看着在听其实已经死了。
+// 对策：自己维护累积文本（不依赖浏览器历史）+ 看门狗 + 判定假死后程序化重启。
+// 参考：业界做 iOS Safari 连续听写的通行做法（状态机 + watchdog）。
+function appleListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
+  const rec = new SR();
+  rec.lang = lang;
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+
+  let acc = '';          // 已定稿的内容（自己累积，不靠浏览器历史）
+  let pending = '';      // 当前这半句还没定稿的中间结果
+  let phase = 'run';     // run=在听 / reboot=重启中 / done=已结束
+  let lastHeard = Date.now();
+  let everHeard = false;
+  let restarts = 0;
+  let heardSinceBoot = false; // 本次重听之后是否听到过东西
+  let blindBoots = 0;         // 连续「重新起来却什么也没听到」的次数（防止空转）
+  const startedAt = Date.now();
+
+  const IDLE_HEARD = 7000;   // 听过之后这么久没动静 → 判定假死
+  const IDLE_NEVER = 20000;  // 从头到尾没开口 → 收工
+  const TOTAL_MAX = 150000;  // 总时长上限，别让它跑一整天
+  const REBOOT_MAX = 40;     // 重启次数上限
+
+  let wd = null;     // 看门狗定时器
+  let bootTimer = null;
+
+  const full = () => ((acc ? acc + ' ' : '') + pending).trim();
+
+  function emit() {
+    if (phase === 'done') return;
+    const t = full();
+    if (t) onPartial && onPartial(correctText(t));
+  }
+
+  function finish(err) {
+    if (phase === 'done') return;
+    phase = 'done';
+    clearTimeout(wd); wd = null;
+    clearTimeout(bootTimer); bootTimer = null;
+    // Safari 的怪毛病：光 stop() 麦克风还亮着，要先在一次 try start 之后 stop 才真释放
+    try { rec.start(); } catch (_) { }
+    try { rec.stop(); } catch (_) { }
+    const t = full();
+    if (t) { onFinal && onFinal(correctText(t).trim()); }
+    else { onError && onError(err || 'no-speech'); }
+  }
+
+  // 安排一次「重新起来听」。为什么要算 blindBoots：
+  // 如果每次起来都什么也听不到（比如 iOS 要求每次开始都要用户手势），
+  // 就会变成「起来 → 结束 → 再起来」的空转死循环，务必踩刹车。
+  function scheduleBoot(delay) {
+    if (phase === 'done') return;
+    if (!heardSinceBoot) {
+      blindBoots++;
+      if (blindBoots >= 3) { finish(everHeard ? null : 'start-failed'); return; }
+    }
+    restarts++;
+    clearTimeout(bootTimer);
+    bootTimer = setTimeout(() => {
+      bootTimer = null;
+      if (phase === 'reboot') startRec();
+    }, delay);
+  }
+
+  function startRec() {
+    if (phase === 'done') return;
+    try {
+      rec.start();
+      phase = 'run';
+      heardSinceBoot = false;
+      lastHeard = Math.max(lastHeard, Date.now() - 3000); // 给点余量，别刚起来就被判死
+    } catch (_) {
+      // 起不来多半是 iOS 要求每次开始都要用户手势 → 没法自动续命，把已听到的交出去
+      finish('start-failed');
+    }
+  }
+
+  function reboot() {
+    if (phase !== 'run') return;
+    phase = 'reboot';
+    try { rec.stop(); } catch (_) { }
+    scheduleBoot(900); // 正常情况靠 onend 立刻重启；onend 不来时由这个定时器兜底
+  }
+
+  rec.onresult = (e) => {
+    let fin = '', interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) fin += r[0].transcript; else interim += r[0].transcript;
+    }
+    if (interim) { pending = interim; lastHeard = Date.now(); emit(); }
+    if (fin) {
+      const t = String(fin).trim();
+      if (t) { acc = acc ? acc + ' ' + t : t; heardSinceBoot = true; blindBoots = 0; }
+      pending = ''; lastHeard = Date.now(); everHeard = true;
+      emit();
+    }
+  };
+
+  rec.onerror = (e) => {
+    const code = (e && e.error) || 'error';
+    // not-allowed / service-not-allowed：权限或系统不给用，重启也没戏，直接收工
+    if (code === 'not-allowed' || code === 'service-not-allowed') { finish(code); return; }
+    // aborted / no-speech 是常态（我们自己 stop 也会报），交给看门狗处理即可
+    if (code === 'aborted' || code === 'no-speech') return;
+    if (phase === 'run') reboot();
+  };
+
+  rec.onend = () => {
+    if (phase === 'done') return;
+    if (phase === 'reboot') {
+      clearTimeout(bootTimer); bootTimer = null;
+      setTimeout(startRec, 250);
+      return;
+    }
+    // 浏览器自己结束了（一句话听完了）。为了能接着说下一句，继续起来听。
+    phase = 'reboot';
+    scheduleBoot(400);
+  };
+
+  wd = setInterval(() => {
+    if (phase === 'done') return;
+    const idle = Date.now() - lastHeard;
+    const aged = Date.now() - startedAt;
+    if (!everHeard && idle > IDLE_NEVER) { finish('no-speech'); return; }
+    if (aged > TOTAL_MAX || restarts > REBOOT_MAX) { finish(null); return; }
+    if (phase === 'run' && idle > IDLE_HEARD) reboot();
+  }, 1000);
+
+  try { rec.start(); } catch (_) { finish('start-failed'); }
+
+  return {
+    stop() {
+      if (phase === 'done') return;
+      phase = 'done';
+      clearTimeout(wd); wd = null;
+      clearTimeout(bootTimer); bootTimer = null;
+      try { rec.start(); } catch (_) { }
+      try { rec.stop(); } catch (_) { }
+      const t = full();
+      onFinal && onFinal(correctText(t || '').trim());
+    },
+  };
+}
+// ===== 苹果专用结束 =====
+
+/** 普通浏览器路径（Chrome 等）：静音后浏览器自己会 end，一句话即最终稿 */
+function webListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
   const rec = new SR();
   rec.lang = lang; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
   let done = false;      // 已交付最终结果
