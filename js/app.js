@@ -122,7 +122,7 @@ async function renderRecord() {
     <div class="mic-wrap">
       <button class="mic" id="mic">🎙️</button>
       <div class="mic-hint">${speech.supported ? (update.APP.ios
-        ? '点一下开始说，说完停一下会自动结束并弹出卡片。<br>iPhone 上<b>一次说一笔</b>最准：<b>「午饭38」</b>'
+        ? '点一下开始说，说完<b>再点一下</b>麦克风。<br>可以一句一句说，也可以连着说好几笔：<b>「打车25，午饭38」</b>'
         : '点一下开始听，说完再点一下记账。<br>一笔一笔说：<b>「午饭38」</b>；也可以一口气说好几笔：<b>「打车25，午饭38，晚饭60」</b>')
         : (speech.inApp ? '这台手机没有语音识别引擎，可用下方「手动记一笔」' : '这台手机 / 浏览器用不了语音，请点下方「手动记一笔」记上')}</div>
       <div class="mic-transcript" id="transcript"></div>
