@@ -1,8 +1,8 @@
 {
-  "versionCode": 11,
-  "versionName": "3.3",
+  "versionCode": 12,
+  "versionName": "3.4",
   "apk": "https://nuanji-accounting-app.pages.dev/nuanji-latest.apk",
   "size": 25585816,
-  "sha256": "81904a167463ef269239310279733e737cd07e8b29fadfe8ff2268c92f97dbee",
-  "notes": "安装包瘦身到 24MB（语音引擎首次使用时下载一次）；「我的」新增检查更新，可在 App 内一键下载安装新版本，数据保留。"
+  "sha256": "87173481dfe878e6b1ab3a575d9f1236ec904c94c3ca20cd90059ead13c6f5ff",
+  "notes": "修好了安卓 App 里「导出 Excel / 导出备份」点了不产生文件的问题（现在会存到手机「下载」目录）；iPhone / iPad 也能直接加到主屏幕当 App 用，不用装安装包。"
 }
