@@ -137,29 +137,47 @@ export function errText(code) {
   return ERR_TEXT[code] || ('语音识别失败：' + code);
 }
 
-// 运行环境说明，供「我的 → 语音自检」显示
+// 给用户看的「一句话体检」，先说结论，再说原因和建议
 export function envText() {
   if (!inApp) {
-    return '当前运行环境：网页版（浏览器或"添加到主屏幕"）。这里没有语音识别接口，语音记账用不了，请点桌面的「暖记账本」图标打开 App。';
+    return '你现在打开的是网页版，语音记账用不了。\n'
+      + '回到手机桌面，点「暖记账本」图标打开 App 就能用了。';
   }
   try {
     const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
-    const parts = [];
-    parts.push('运行环境：暖记账本 App v' + (d.ver || '?') + '（安卓 ' + (d.sdk || '?') + '）');
-    parts.push('麦克风权限：' + (d.mic ? '已授权 ✔' : '还没授权，第一次点麦克风时会弹窗问你'));
-    parts.push('手机自带语音服务：' + ((d.sys || d.ondev || d.intent) ? '有 ✔' : '没有（国产手机常见，不影响使用）'));
     const asrOk = d.asr === 1 || d.vosk === 1;
-    const eng = d.engine ? ('（' + d.engine + '）') : '';
-    if (asrOk) parts.push('App 内置离线语音：就绪 ✔' + eng + '，不联网也能用');
-    else if (d.asr === 0 || d.vosk === 0) parts.push('App 内置离线语音：首次准备中（解压模型），约十几秒');
-    else parts.push('App 内置离线语音：加载失败 ✘');
-    parts.push('语音记账是否可用：' + ((d.sys || d.ondev || d.intent || asrOk) ? '可以用 ✔' : '暂时用不了 ✘'));
-    const PATH_NAME = { sherpa: 'App 内置离线引擎（首选）', sys: '手机系统语音服务', ondev: '手机离线识别', intent: '系统语音输入界面' };
-    parts.push('最近一次走的通道：' + (PATH_NAME[d.path] || '还没用过'));
-    parts.push('最近一次错误码：' + (d.err || '无'));
-    return parts.join('\n');
+    const preparing = d.asr === 0 || d.vosk === 0;
+    const usable = !!(d.sys || d.ondev || d.intent || asrOk);
+    const lines = [];
+    lines.push('语音记账：' + (usable ? '可以用 ✔' : (preparing ? '正在准备，稍等再试' : '暂时用不了 ✘')));
+    if (usable) lines.push('点一下首页的麦克风，说完再点一下就好。');
+    else if (preparing) lines.push('第一次打开要先装好语音引擎，大约十几秒；装好以后不联网也能用。');
+    lines.push('麦克风：' + (d.mic ? '已允许 ✔' : '还没允许（第一次点麦克风时会弹窗问你）'));
+    if (asrOk) lines.push('语音引擎：已装好，不联网也能用 ✔');
+    else if (preparing) lines.push('语音引擎：正在准备中…');
+    else lines.push('语音引擎：没装好 ✘');
+    if (!usable && !preparing) lines.push('别急，可以先点「手动记一笔」把账记上。若一直这样，把下面「详细诊断信息」截图发我。');
+    return lines.join('\n');
   } catch (_) {
-    return '运行环境：暖记账本 App（版本信息读取失败）';
+    return '暂时读不到语音状态，把 App 完全关掉再打开试试。';
+  }
+}
+
+// 技术诊断信息（默认收起，排障/反馈时复制给对方看）
+export function envTech() {
+  if (!inApp) return '当前不在 App 里运行（网页版）。';
+  try {
+    const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
+    const PATH_NAME = { sherpa: 'App 内置离线引擎', sys: '手机系统语音服务', ondev: '手机离线识别', intent: '系统语音输入界面' };
+    return [
+      '版本：v' + (d.ver || '?') + '（安卓 ' + (d.sdk || '?') + '）',
+      '识别引擎：' + (d.engine || '未知'),
+      '手机自带语音：' + ((d.sys || d.ondev || d.intent) ? '有' : '没有'),
+      '上次识别用的通道：' + (PATH_NAME[d.path] || '还没用过'),
+      '上次错误码：' + (d.err || '无')
+    ].join('\n');
+  } catch (_) {
+    return '版本信息读取失败。';
   }
 }
 
