@@ -258,8 +258,7 @@ body {
 .cal-day.sel { background: var(--accent); color: #fff; }
 .cal-day.sel .amt { color: #fff; }
 .cal-day.other { color: var(--muted); opacity: .5; }
-.cal-day.has::after { content: ""; position: absolute; bottom: 6px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.cal-day.sel.has::after { background: #fff; }
+/* 注：格子里已经直接显示当天金额，不再额外画「有记录」的小圆点 —— 它会压在金额上 */
 
 /* 统计 */
 .period-seg { display: flex; gap: 6px; background: var(--surface-2); border-radius: var(--radius-pill); padding: 4px; margin-bottom: 16px; }
