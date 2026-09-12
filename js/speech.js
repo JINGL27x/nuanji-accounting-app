@@ -89,11 +89,12 @@ const ERR_TEXT = {
 function diagSummary() {
   try {
     const d = JSON.parse((ASR && ASR.diag && ASR.diag()) || '{}');
+    const asrOk = d.asr === 1 || d.vosk === 1; // asr=新字段，vosk=旧字段兼容
     const miss = [];
     if (!d.sys) miss.push('系统语音服务');
     if (!d.ondev) miss.push('系统离线识别');
     if (!d.intent) miss.push('语音输入界面');
-    if (d.vosk !== 1) miss.push('内置离线引擎');
+    if (!asrOk) miss.push('内置离线引擎');
     return miss.length
       ? ('App 探测不到：' + miss.join('、') + '（安卓 ' + d.sdk + '）')
       : ('App v' + d.ver + '｜安卓 ' + d.sdk + '｜错误码 ' + (d.err || '无'));
@@ -121,10 +122,12 @@ export function envText() {
     parts.push('运行环境：暖记账本 App v' + (d.ver || '?') + '（安卓 ' + (d.sdk || '?') + '）');
     parts.push('麦克风权限：' + (d.mic ? '已授权 ✔' : '还没授权，第一次点麦克风时会弹窗问你'));
     parts.push('手机自带语音服务：' + ((d.sys || d.ondev || d.intent) ? '有 ✔' : '没有（国产手机常见，不影响使用）'));
-    if (d.vosk === 1) parts.push('App 内置离线语音：就绪 ✔（不联网也能用）');
-    else if (d.vosk === 0) parts.push('App 内置离线语音：首次准备中，约十几秒');
+    const asrOk = d.asr === 1 || d.vosk === 1;
+    const eng = d.engine ? ('（' + d.engine + '）') : '';
+    if (asrOk) parts.push('App 内置离线语音：就绪 ✔' + eng + '，不联网也能用');
+    else if (d.asr === 0 || d.vosk === 0) parts.push('App 内置离线语音：首次准备中（解压模型），约十几秒');
     else parts.push('App 内置离线语音：加载失败 ✘');
-    parts.push('语音记账是否可用：' + ((d.sys || d.ondev || d.intent || d.vosk === 1) ? '可以用 ✔' : '暂时用不了 ✘'));
+    parts.push('语音记账是否可用：' + ((d.sys || d.ondev || d.intent || asrOk) ? '可以用 ✔' : '暂时用不了 ✘'));
     parts.push('最近一次错误码：' + (d.err || '无'));
     return parts.join('\n');
   } catch (_) {
@@ -146,25 +149,28 @@ export async function checkMic() {
   return 'unknown';
 }
 
-// 走 App 原生识别（AndroidSpeech.start / stop，结果通过 window.__asr 回调）
-// 关键：原生通道（Vosk / 系统识别）是「持续听」模式——一句话说完不会自动停，
-// 只有用户调用 stop() 才结束。因此这里不把 finished 设在 onFinal/onError 上，
-// 否则界面会「听一句就弹起」。（致命错误才上报界面，偶发瞬时错误忽略）
+// 走 App 原生识别（sherpa-onnx 流式，结果通过 window.__asr 回调）
+// 关键时序：原生通道在 stop() 之后才回调 onFinal（那才是本次听写的最终结果），
+// 所以「停止后到达的 onFinal 必须交付」，不能因为已 stopped 就丢掉，否则卡片永远不弹。
 function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
-  let stopped = false;
+  let stopped = false;    // 用户已点停止（此后不再要 partial）
+  let delivered = false;  // 最终结果只交付一次
   window.__asr = {
     onReady() {},
     onPartial(t) { if (!stopped && t) onPartial && onPartial(t); },
     onFinal(t) {
-      if (stopped) return;
-      const s = correctText(String(t || '')).trim(); // 纠错后再回调
-      if (s) onFinal && onFinal(s); // 一句话识别完，累加到界面，但不结束监听
+      if (delivered) return;
+      delivered = true;
+      // 纠错后再交付（即使是空串也交付，让界面复位）
+      onFinal && onFinal(correctText(String(t || '')).trim());
     },
     onError(code) {
-      if (stopped) return;
-      // 只把致命 / 需要界面提示的错误上报，Vosk 偶发的瞬时错误不强制中断
+      if (delivered) return;
+      delivered = true;
       if (['start-failed', 'vosk-err', 'preparing', 'error', 'network'].includes(code)) {
         onError && onError(code || 'error');
+      } else {
+        onFinal && onFinal(''); // 非致命错误：复位界面即可
       }
     },
   };
