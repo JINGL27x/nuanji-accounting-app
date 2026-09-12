@@ -93,21 +93,25 @@ export async function checkMic() {
 }
 
 // 走 App 原生识别（AndroidSpeech.start / stop，结果通过 window.__asr 回调）
+// 关键：原生通道（Vosk / 系统识别）是「持续听」模式——一句话说完不会自动停，
+// 只有用户调用 stop() 才结束。因此这里不把 finished 设在 onFinal/onError 上，
+// 否则界面会「听一句就弹起」。（致命错误才上报界面，偶发瞬时错误忽略）
 function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
-  let finished = false;
+  let stopped = false;
   window.__asr = {
     onReady() {},
-    onPartial(t) { if (!finished && t) onPartial && onPartial(t); },
+    onPartial(t) { if (!stopped && t) onPartial && onPartial(t); },
     onFinal(t) {
-      if (finished) return;
-      finished = true;
-      if (t && String(t).trim()) onFinal && onFinal(String(t).trim());
-      else onError && onError('no-speech');
+      if (stopped) return;
+      const s = String(t || '').trim();
+      if (s) onFinal && onFinal(s); // 一句话识别完，累加到界面，但不结束监听
     },
     onError(code) {
-      if (finished) return;
-      finished = true;
-      onError && onError(code || 'error');
+      if (stopped) return;
+      // 只把致命 / 需要界面提示的错误上报，Vosk 偶发的瞬时错误不强制中断
+      if (['start-failed', 'vosk-err', 'preparing', 'error', 'network'].includes(code)) {
+        onError && onError(code || 'error');
+      }
     },
   };
   try {
@@ -116,7 +120,7 @@ function nativeListen({ lang = 'zh-CN', onPartial, onFinal, onError }) {
     window.__asr.onError('start-failed');
   }
   return {
-    stop() { finished = true; try { ASR.stop(); } catch (_) {} },
+    stop() { stopped = true; try { ASR.stop(); } catch (_) {} },
   };
 }
 
