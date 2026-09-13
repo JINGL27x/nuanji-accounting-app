@@ -9,16 +9,15 @@ export function moneyShort(n) {
   const s = Number.isInteger(v) ? String(v) : v.toFixed(2);
   return '¥' + s;
 }
-/** 日历格子里那行金额：位置只有 40px 上下（360 宽的屏更窄），必须尽量短。
-    所以不带 ¥（格子里的橙色数字本身就是金额，点进去有精确值）、不带小数，上万用「万」。
-    实测：『¥113.19』『¥1000』在 360 宽的屏上都会被截成省略号，现在的最长形态是『1.2万』。 */
+/** 日历格子里那行金额。格子只有 36~44px 宽，取舍如下：
+    - 去掉 ¥（那一个符号就要 6px，去掉后 113.19 这种六位数字刚好放得下）；
+    - 保留两位小数（金额看得准）；
+    - 上万改用「万」并同样保留两位，否则 12345.67 这种八位数字必然超出。
+    精确金额在点开的那天详情里还有一份（money()）。 */
 export function moneyCell(n) {
-  const v = Math.round(Number(n) || 0);
-  if (v >= 10000) {
-    const w = Math.round(v / 1000) / 10;          // 12345 → 1.2（万）
-    return (Number.isInteger(w) ? w : w.toFixed(1)) + '万';
-  }
-  return String(v);
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  if (v >= 10000) return (v / 10000).toFixed(2) + '万';   // 12345.67 → 1.23万
+  return v.toFixed(2);                                    // 113.19；整数也补成 113.00
 }
 
 export function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
