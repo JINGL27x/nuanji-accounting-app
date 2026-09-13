@@ -274,9 +274,19 @@ body {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   position: relative; color: var(--ink);
   min-width: 0;                 /* grid/flex 子项默认 min-width:auto，会被内容顶开，这里必须压住 */
+  padding: 0;                   /* button 默认带 1px 6px 的 padding —— 左右各吃掉 6px，
+                                   36px 的格子只剩 24px 可以用，带小数的金额才会被裁。 */
 }
 .cal-day .d { font-size: 15px; font-weight: 600; }
-.cal-day .amt { font-size: 9px; color: var(--accent-deep); min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 金额占满整个格子宽度（width:100%）—— 之前是自动收缩到"刚好包住文字"，
+   白白丢掉 10px 多可用空间，6 位数字才会被裁。占满后 113.19 / 1234.56 都放得下。 */
+.cal-day .amt {
+  font-size: 9px; color: var(--accent-deep);
+  width: 100%; text-align: center; min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 极窄的老机型（≤340px）再把金额缩一点，保证带小数的数字仍能完整显示 */
+@media (max-width: 340px) { .cal-day .amt { font-size: 8px; } }
 .cal-day.today { background: var(--accent-soft); }
 .cal-day.sel { background: var(--accent); color: #fff; }
 .cal-day.sel .amt { color: #fff; }
