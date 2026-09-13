@@ -521,24 +521,42 @@ body {
 /* 账户卡片：两列。列宽必须 minmax(0,1fr) —— 1fr 的最小宽度是内容宽度，
    金额/名字长的账户会把这一列顶宽，两列加起来超出卡片（就出现横向溢出）。 */
 .acc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-/* 大类组头（微信 / 支付宝 / 银行卡）：横跨两列，带小计和「＋」。
-   只有 2 个以上账户的大类才显示组头 —— 只有一个的话组头纯属重复。 */
-.acc-grouphead {
-  grid-column: 1 / -1;
+/* 账户按「类」分块。类与类之间留出间隔，每一类各自成块 ——
+   不这么做的话，排在后面的账户会顺着上一类的两列网格继续流，
+   看着就像上一类里的钱包（现金、银行卡会被误读成支付宝下面的）。 */
+.acc-sec + .acc-sec { margin-top: 14px; }
+
+/* 类名行（微信 / 支付宝 / 银行卡…）：圆点 + 类名 + 小计 + 「＋」 */
+.acc-sechead {
   display: flex; align-items: center; gap: 7px;
-  margin: 2px 2px -2px;
+  margin: 0 2px 8px;
   font-size: 13px; font-weight: 700; color: var(--ink-soft);
 }
-.acc-grouphead .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
-.acc-grouphead .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.acc-grouphead .sum { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent-deep); white-space: nowrap; }
-.acc-grouphead .gadd {
-  flex: none; border: none; cursor: pointer; width: 24px; height: 24px; border-radius: 50%;
+.acc-sechead .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+.acc-sechead .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-sechead .sum { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent-deep); white-space: nowrap; }
+
+/* 只有一个钱包的类：直接排成整行 —— 名字只说一遍，不用再顶一个和它同名的类名。
+   整行铺满宽度，天生就把上面那个类的两列网格打断，边界一眼看得出来。 */
+.acc-single {
+  display: flex; align-items: center; gap: 12px; cursor: pointer;
+  background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 11px 13px; min-width: 0;
+  transition: transform .12s;
+}
+.acc-single:active { transform: scale(.98); }
+.acc-single .acc-ico { width: 34px; height: 34px; border-radius: 11px; font-size: 18px; align-self: center; }
+.acc-single .acc-nm { flex: 1; min-width: 0; }
+.acc-single .acc-bal { flex: none; font-size: 17px; }
+
+/* 「＋」= 在这一类里再加一个。只有有类名的类才显示（现金 / 基金这种不显示）。 */
+.gadd {
+  flex: none; border: none; cursor: pointer; width: 26px; height: 26px; border-radius: 50%;
   background: var(--accent-soft); color: var(--accent-deep);
   font-size: 15px; font-weight: 700; line-height: 1;
   display: flex; align-items: center; justify-content: center;
 }
-.acc-grouphead .gadd:active { transform: scale(.9); }
+.gadd:active { transform: scale(.9); }
 .acc-card {
   border: none; cursor: pointer; color: var(--ink); text-align: left;
   background: var(--surface); border-radius: var(--radius-sm);
@@ -565,12 +583,16 @@ body {
 }
 .acc-bal.neg { color: var(--danger); }
 .acc-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.acc-card.add {
-  align-items: center; justify-content: center; gap: 4px;
-  border: 1.5px dashed var(--line); background: none; box-shadow: none;
+.acc-add {
+  width: 100%; margin-top: 14px; cursor: pointer;
+  border: 1.5px dashed var(--line); background: none;
+  border-radius: var(--radius-sm); padding: 14px;
   color: var(--accent-deep); font-weight: 700; font-size: 13px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: transform .12s;
 }
-.acc-card.add .plus { font-size: 24px; line-height: 1; }
+.acc-add:active { transform: scale(.98); }
+.acc-add .plus { font-size: 20px; line-height: 1; }
 
 /* 账户页里的操作按钮一排 */
 .acc-acts { display: flex; gap: 8px; margin-top: 14px; }
