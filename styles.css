@@ -150,19 +150,38 @@ body {
   font-size: 15px; text-align: center; font-weight: 600;
 }
 
-/* 确认卡（识别结果） */
+/* 确认卡（识别结果） —— 底部弹卡
+   键盘弹出时可视区会立刻变矮（安卓 WebView 走 adjustResize）。这里不再写死 inset:0，
+   而是用 js 实时算出的可视区高度 --vv-h / 顶部偏移 --vv-top；
+   sheet 自己也要能滚动（max-height + overflow-y），否则内容一超高就从屏幕上方溢出去 ——
+   金额输入框正好在弹卡上部，会被整条顶出屏幕，也就是「输入时看不见数字」的根源。 */
 .sheet-mask {
-  position: fixed; inset: 0; background: rgba(74,64,57,.34);
+  position: fixed; left: 0; right: 0; top: var(--vv-top, 0px);
+  height: var(--vv-h, 100%);
+  background: rgba(74,64,57,.34);
   display: flex; align-items: flex-end; justify-content: center; z-index: 50;
   animation: fadeIn .2s ease;
 }
 @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 .sheet {
   width: 100%; max-width: 540px; background: var(--bg);
-  border-radius: 28px 28px 0 0; padding: 20px 18px calc(20px + var(--safe-b));
+  border-radius: 28px 28px 0 0;
+  /* 键盘占位时底部安全区已被盖住，把那点留白收掉，省得内容白滚一截 */
+  --sheet-pb: max(20px, calc(20px + var(--safe-b) - var(--kb, 0px)));
+  padding: 20px 18px var(--sheet-pb);
   animation: sheetUp .3s cubic-bezier(.22,.61,.36,1);
+  max-height: 100%; overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
 }
 @keyframes sheetUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+/* 弹卡底部的「取消 / 保存」：视野被键盘挤小时吸在弹卡底部，不用先收键盘再滚下去找；
+   左右用负 margin 铺满，免得内容从按钮两侧的缝里滚过去 */
+.sheet .flex {
+  position: sticky; bottom: calc(-1 * var(--sheet-pb)); z-index: 3;
+  margin-left: -18px; margin-right: -18px;
+  padding-left: 18px; padding-right: 18px; padding-bottom: var(--sheet-pb);
+  background: var(--bg);
+}
 .sheet h3 { margin: 4px 0 16px; font-size: 17px; }
 .amount-big { font-size: 40px; font-weight: 800; color: var(--ink); text-align: center; margin: 6px 0 4px; }
 .amount-big .cur { font-size: 22px; color: var(--muted); margin-right: 4px; }
