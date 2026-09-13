@@ -66,14 +66,14 @@ const DEFAULT_CATS = [
 // order 隔开编号（1x 微信 / 2x 支付宝…），中间留空方便以后插。
 // initial = 开户时的金额，用户第一次用时填。
 const DEFAULT_ACCOUNTS = [
-  { id: 'a0', name: '零钱', emoji: '💚', color: '#3ED35A', group: '微信', kind: 'normal', order: 1 },
+  { id: 'a0', name: '零钱', emoji: '💬', color: '#3ED35A', group: '微信', kind: 'normal', order: 1 },
   { id: 'a1', name: '零钱通', emoji: '💰', color: '#2FB8A0', group: '微信', kind: 'invest', order: 2 },
-  { id: 'a2', name: '余额', emoji: '💙', color: '#5BA8FF', group: '支付宝', kind: 'normal', order: 11 },
-  { id: 'a3', name: '余额宝', emoji: '📈', color: '#7C9CFF', group: '支付宝', kind: 'invest', order: 12 },
+  { id: 'a2', name: '余额', emoji: '💲', color: '#5BA8FF', group: '支付宝', kind: 'normal', order: 11 },
+  { id: 'a3', name: '余额宝', emoji: '🐷', color: '#7C9CFF', group: '支付宝', kind: 'invest', order: 12 },
   { id: 'a4', name: '小荷包', emoji: '👛', color: '#FF6FB5', group: '支付宝', kind: 'normal', order: 13 },
   { id: 'a5', name: '银行卡', emoji: '💳', color: '#B98CFF', group: '银行卡', kind: 'normal', order: 21 },
   { id: 'a6', name: '现金', emoji: '💵', color: '#FFC15B', group: '', kind: 'normal', order: 31 },
-  { id: 'a7', name: '基金', emoji: '🪙', color: '#F2703F', group: '', kind: 'invest', order: 41 },
+  { id: 'a7', name: '基金', emoji: '📈', color: '#F2703F', group: '', kind: 'invest', order: 41 },
 ];
 
 export async function seedIfEmpty() {
@@ -100,7 +100,7 @@ export async function seedIfEmpty() {
  * 因为 id 不变，原来记在这个账户上的每一笔账、以及你填的开户金额，都原地不动。
  * 只在「账户还是默认那个名字」时才动手，用户改过名字的一律不碰。幂等，跑几遍都一样。
  * 另外三件小事：把用户自建的账户排到最后（先后顺序不变）、名字带「银行」的顺手归到「银行卡」、
- * 把默认的 🧧 小荷包图标换成 👛。
+ * 统一几个丑 / 撞车的默认图标（💚零钱→💬、💙余额→💲、🧧小荷包→👛、📈余额宝→🐷）。
  */
 export async function migrateSubAccounts() {
   const accs = await getAllAccounts();
@@ -122,7 +122,7 @@ export async function migrateSubAccounts() {
   if (byId.a1 && byId.a1.name === '支付宝' && !hasGroup('支付宝')) {
     await put('accounts', Object.assign({}, byId.a1, { name: '余额', group: '支付宝', order: 11 }));
     await put('accounts', {
-      id: 'as2', name: '余额宝', emoji: '📈', color: '#7C9CFF', group: '支付宝',
+      id: 'as2', name: '余额宝', emoji: '🐷', color: '#7C9CFF', group: '支付宝',
       initial: 0, order: 12, hidden: false, kind: 'invest', createdAt: Date.now(),
     });
     await put('accounts', {
@@ -160,11 +160,27 @@ export async function migrateSubAccounts() {
     n++;
   }
 
-  // 小荷包原来给的是 🧧（红包），在粉色底上太扎眼 —— 统一换成 👛（小钱包）。
-  // 同样只改「还是那个默认图标」的，用户自己换过的（或者改过名字的）一律不碰。
-  for (const a of accs) {
-    if (a.emoji === '🧧') {
-      await put('accounts', Object.assign({}, a, { emoji: '👛' })); n++;
+  // 统一几个不好看 / 撞车的默认图标，给「已经升过级的手机」也补一遍：
+  //   💚 零钱 → 💬（绿色爱心太土）  💙 余额 → 💲（蓝色爱心太土）
+  //   🧧 小荷包 → 👛（粉色底上红红包太扎眼）  📈 余额宝 → 🐷（跟「基金」撞成一样的了）
+  // ⚠️ 两件事都不能只看一样：
+  //   ① 不能只按图标找 —— 余额宝和基金都是 📈，只认图标会把基金也改了；
+  //   ② 也不能只按 id 找 —— id 在不同库里是重排过的：从老版本升上来的手机「余额」是 a1，
+  //      而全新安装的手机「余额」是 a2、「余额宝」是 a3、「小荷包」是 a4（余额宝压根不叫 as2）。
+  // 所以判据是「**名字 + 现在的图标**两个都还是默认那一对」才动手 ——
+  // 这样既不会误伤基金（名字不叫余额宝），也不会漏掉任何一种 id 布局，
+  // 用户自己改过名字或换过图标的更是一律不碰。
+  const ICON_FIX = [
+    { name: '零钱',   from: '💚', to: '💬' },
+    { name: '余额',   from: '💙', to: '💲' },
+    { name: '余额宝', from: '📈', to: '🐷' },
+    { name: '小荷包', from: '🧧', to: '👛' },
+  ];
+  const fresh = await getAllAccounts();   // 前面的改名分支刚写过，得重新取一遍才拿得到新名字
+  for (const a of fresh) {
+    const fix = ICON_FIX.find((f) => f.name === a.name && f.from === a.emoji);
+    if (fix) {
+      await put('accounts', Object.assign({}, a, { emoji: fix.to })); n++;
     }
   }
   return n;
