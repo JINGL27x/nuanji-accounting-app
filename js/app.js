@@ -1790,12 +1790,12 @@ async function init() {
   if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {})); }
   await db.seedIfEmpty();
   // 老库一次性升级：把「微信 / 支付宝」拆成里面的小钱包（只改名字，余额和流水原地不动）
-  // 开关从 subsV1 换成 subsV2 —— 已经升过一次的手机也会再跑一遍，
-  // 这回只是把小荷包的 🧧 图标换成 👛（改名那些分支都会自己跳过，安全的）。
+  // 开关从 subsV1 → subsV2 → subsV3 一路换 —— 已经升过一次的手机也会再跑一遍，
+  // 这回只是把几个默认图标统一掉（改名的分支都会自己跳过，安全的）。
   try {
-    if (!(await db.getMeta('subsV2'))) {
+    if (!(await db.getMeta('subsV3'))) {
       const n = await db.migrateSubAccounts();
-      await db.setMeta('subsV2', { at: Date.now(), changed: n });
+      await db.setMeta('subsV3', { at: Date.now(), changed: n });
     }
   } catch (_) { /* 升级失败不该拦住 App；下次打开会重试 */ }
   try { await runDuePlans(); } catch (_) { /* 定投补记失败不该拦住整个 App */ }
