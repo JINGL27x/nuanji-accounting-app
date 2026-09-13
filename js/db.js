@@ -1,6 +1,6 @@
 // 本地存储层（IndexedDB）
 const DB_NAME = 'nuanji-ledger';
-const DB_VER = 2;   // v2：新增 accounts（账户）/ plans（定投计划）。老库升级时只加表，不动已有数据。
+const DB_VER = 3;   // v2：加 accounts / plans；v3：加 meta（记「子账户拆分」这类一次性迁移有没有做过）
 let dbp = null;
 
 function openDB() {
@@ -18,6 +18,7 @@ function openDB() {
       if (!db.objectStoreNames.contains('quick')) db.createObjectStore('quick', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('accounts')) db.createObjectStore('accounts', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('plans')) db.createObjectStore('plans', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'id' });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -59,14 +60,20 @@ const DEFAULT_CATS = [
   { type: 'income', name: '其他收入', emoji: '🪙', color: '#8FD98F' },
 ];
 
-// 默认账户（钱平时放在哪几个地方）。initial = 开户时的金额，用户第一次用时填。
-// 前四个是日常花钱的地方；「基金」是理财账户 —— 定投要有个去处，先给一个，不要可以删。
+// 默认账户。微信 / 支付宝下面本来就分好几个小钱包（零钱、零钱通、余额、余额宝、小荷包），
+// 银行卡也常常好几张 —— 所以账户带一个 group 字段：
+//   group 相同的算同一个「大类」（点进去再选具体哪个）；没有 group 的自己单独算一类。
+// order 隔开编号（1x 微信 / 2x 支付宝…），中间留空方便以后插。
+// initial = 开户时的金额，用户第一次用时填。
 const DEFAULT_ACCOUNTS = [
-  { name: '微信', emoji: '💚', color: '#3ED35A', kind: 'normal' },
-  { name: '支付宝', emoji: '💙', color: '#5BA8FF', kind: 'normal' },
-  { name: '银行卡', emoji: '💳', color: '#B98CFF', kind: 'normal' },
-  { name: '现金', emoji: '💵', color: '#FFC15B', kind: 'normal' },
-  { name: '基金', emoji: '📈', color: '#F2703F', kind: 'invest' },
+  { id: 'a0', name: '零钱', emoji: '💚', color: '#3ED35A', group: '微信', kind: 'normal', order: 1 },
+  { id: 'a1', name: '零钱通', emoji: '💰', color: '#2FB8A0', group: '微信', kind: 'invest', order: 2 },
+  { id: 'a2', name: '余额', emoji: '💙', color: '#5BA8FF', group: '支付宝', kind: 'normal', order: 11 },
+  { id: 'a3', name: '余额宝', emoji: '📈', color: '#7C9CFF', group: '支付宝', kind: 'invest', order: 12 },
+  { id: 'a4', name: '小荷包', emoji: '🧧', color: '#FF6FB5', group: '支付宝', kind: 'normal', order: 13 },
+  { id: 'a5', name: '银行卡', emoji: '💳', color: '#B98CFF', group: '银行卡', kind: 'normal', order: 21 },
+  { id: 'a6', name: '现金', emoji: '💵', color: '#FFC15B', group: '', kind: 'normal', order: 31 },
+  { id: 'a7', name: '基金', emoji: '🪙', color: '#F2703F', group: '', kind: 'invest', order: 41 },
 ];
 
 export async function seedIfEmpty() {
@@ -78,14 +85,85 @@ export async function seedIfEmpty() {
   }
   const accs = await getAll('accounts');
   if (accs.length === 0) {
-    DEFAULT_ACCOUNTS.forEach((a, i) => {
+    DEFAULT_ACCOUNTS.forEach((a) => {
       put('accounts', {
-        id: 'a' + i, name: a.name, emoji: a.emoji, color: a.color,
-        initial: 0, order: i, hidden: false, kind: a.kind || 'normal', createdAt: Date.now(),
+        id: a.id, name: a.name, emoji: a.emoji, color: a.color, group: a.group,
+        initial: 0, order: a.order, hidden: false, kind: a.kind, createdAt: Date.now(),
       });
     });
   }
 }
+
+/**
+ * 老库升级：把「微信 / 支付宝」拆成里面的小钱包。
+ * 原则是**只改名字、只补缺的，绝不碰余额和流水** ——
+ * 因为 id 不变，原来记在这个账户上的每一笔账、以及你填的开户金额，都原地不动。
+ * 只在「账户还是默认那个名字」时才动手，用户改过名字的一律不碰。幂等，跑几遍都一样。
+ * 另外两件小事：把用户自建的账户排到最后（先后顺序不变），名字带「银行」的顺手归到「银行卡」。
+ */
+export async function migrateSubAccounts() {
+  const accs = await getAllAccounts();
+  const byId = {}; accs.forEach((a) => { byId[a.id] = a; });
+  const hasGroup = (g) => accs.some((a) => a.group === g);
+  let n = 0;
+
+  // 微信：a0「微信」→「零钱」，再补一个「零钱通」
+  if (byId.a0 && byId.a0.name === '微信' && !hasGroup('微信')) {
+    await put('accounts', Object.assign({}, byId.a0, { name: '零钱', group: '微信', order: 1 }));
+    await put('accounts', {
+      id: 'as1', name: '零钱通', emoji: '💰', color: '#2FB8A0', group: '微信',
+      initial: 0, order: 2, hidden: false, kind: 'invest', createdAt: Date.now(),
+    });
+    n += 2;
+  }
+
+  // 支付宝：a1「支付宝」→「余额」，再补「余额宝」「小荷包」
+  if (byId.a1 && byId.a1.name === '支付宝' && !hasGroup('支付宝')) {
+    await put('accounts', Object.assign({}, byId.a1, { name: '余额', group: '支付宝', order: 11 }));
+    await put('accounts', {
+      id: 'as2', name: '余额宝', emoji: '📈', color: '#7C9CFF', group: '支付宝',
+      initial: 0, order: 12, hidden: false, kind: 'invest', createdAt: Date.now(),
+    });
+    await put('accounts', {
+      id: 'as3', name: '小荷包', emoji: '🧧', color: '#FF6FB5', group: '支付宝',
+      initial: 0, order: 13, hidden: false, kind: 'normal', createdAt: Date.now(),
+    });
+    n += 3;
+  }
+
+  // 银行卡归到「银行卡」这个大类下（一张卡时看不出差别；以后加了建设银行就会自动成组）
+  if (byId.a2 && !byId.a2.group) {
+    await put('accounts', Object.assign({}, byId.a2, { group: '银行卡', order: 21 })); n++;
+  }
+  if (byId.a3 && byId.a3.order === 3) {   // 老的「现金」
+    await put('accounts', Object.assign({}, byId.a3, { order: 31 })); n++;
+  }
+  if (byId.a4 && byId.a4.order === 4) {   // 老的「基金」
+    await put('accounts', Object.assign({}, byId.a4, { order: 41 })); n++;
+  }
+
+  // 上一版里用户自己加的账户，order 是「当时的最大值 + 1」—— 通常就只有 5、6 这种小数字。
+  // 而默认账户升级后的 order 变成了 1 / 11 / 21…，这些小 order 会被夹在「微信」和「支付宝」中间，
+  // 看起来就像有个账户跑错了组。所以把「不是已知默认账户」的一律排到最后，先后顺序保持不变。
+  const KNOWN = new Set(['a0', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'as1', 'as2', 'as3']);
+  const extras = accs
+    .filter((a) => !KNOWN.has(a.id) && (a.order === undefined || a.order === null || Number(a.order) < 100))
+    .sort((x, y) => (Number(x.order) || 0) - (Number(y.order) || 0));
+  let next = 101;
+  for (const a of extras) {
+    const patch = { order: next++ };
+    // 名字里带「银行」的自建账户（比如「广发银行」）顺手归到「银行卡」大类，
+    // 省得升级完还要手动归类一次 —— 用户随时可以在「编辑」里改回去。
+    if (!a.group && /银行/.test(a.name || '')) patch.group = '银行卡';
+    await put('accounts', Object.assign({}, a, patch));
+    n++;
+  }
+  return n;
+}
+
+/** 一次性迁移的开关：做过就记在 meta 里，别每次都跑 */
+export async function getMeta(id) { return get('meta', id); }
+export async function setMeta(id, val) { return put('meta', Object.assign({ id }, val || {})); }
 
 // ---------- 账户 ----------
 // 按 order 排好再返回 —— IndexedDB 的 getAll 是按主键（id）排的，
@@ -127,16 +205,16 @@ export async function deleteQuick(id) { return del('quick', id); }
 
 // 备份：导出全部 / 导入覆盖
 export async function exportAll() {
-  const [records, categories, budgets, quick, accounts, plans] = await Promise.all([
+  const [records, categories, budgets, quick, accounts, plans, meta] = await Promise.all([
     getAll('records'), getAll('categories'), getAll('budgets'), getAll('quick'),
-    getAll('accounts'), getAll('plans'),
+    getAll('accounts'), getAll('plans'), getAll('meta'),
   ]);
-  return { app: 'nuanji', version: 2, exportedAt: new Date().toISOString(), records, categories, budgets, quick, accounts, plans };
+  return { app: 'nuanji', version: 3, exportedAt: new Date().toISOString(), records, categories, budgets, quick, accounts, plans, meta };
 }
 export async function importAll(data, merge = false) {
   if (!merge) {
     await Promise.all([clearStore('records'), clearStore('categories'), clearStore('budgets'),
-      clearStore('quick'), clearStore('accounts'), clearStore('plans')]);
+      clearStore('quick'), clearStore('accounts'), clearStore('plans'), clearStore('meta')]);
   }
   for (const r of data.records || []) await put('records', r);
   for (const c of data.categories || []) await put('categories', c);
@@ -144,5 +222,7 @@ export async function importAll(data, merge = false) {
   for (const q of data.quick || []) await put('quick', q);
   for (const a of data.accounts || []) await put('accounts', a);
   for (const p of data.plans || []) await put('plans', p);
-  await seedIfEmpty();   // 老备份里没有账户的话，补上默认的几个，免得页面空着
+  for (const m of data.meta || []) await put('meta', m);
+  // 老备份里没有账户 / 账户还是老结构的话，这里补上并升级
+  await seedIfEmpty();
 }
