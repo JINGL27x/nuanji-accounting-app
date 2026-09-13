@@ -9,16 +9,17 @@ export function moneyShort(n) {
   const s = Number.isInteger(v) ? String(v) : v.toFixed(2);
   return '¥' + s;
 }
-/** 日历格子里那行金额。格子只有 36~44px 宽，取舍如下：
-    - 去掉 ¥（那一个符号就要 6px，去掉后 113.19 这种六位数字刚好放得下）；
-    - 保留两位小数（金额看得准）；
-    - 上万改用「万」并同样保留两位，否则 12345.67 这种八位数字必然超出。
-    精确金额在点开的那天详情里还有一份（money()）。 */
+/** 日历格子里那行金额。格子只有 36~44px 可用宽度，取舍如下：
+    - 带 ¥ 和两位小数（金额看得准，符号也让「这是钱」一目了然）；
+    - 上万改用「万」，否则 ¥12345.67 这种九位字符串必然超出；
+    太长的（8 位以上或带「万」）由 CSS 自动降到 8px，见 .cal-day .amt.sm。 */
 export function moneyCell(n) {
   const v = Math.round((Number(n) || 0) * 100) / 100;
-  if (v >= 10000) return (v / 10000).toFixed(2) + '万';   // 12345.67 → 1.23万
-  return v.toFixed(2);                                    // 113.19；整数也补成 113.00
+  if (v >= 10000) return '¥' + (v / 10000).toFixed(2) + '万';   // ¥1.23万
+  return '¥' + v.toFixed(2);                                    // ¥113.19
 }
+/** 这串金额在格子里算不算「长」（决定是否用小一号字） */
+export function cellAmtLong(s) { return s.length >= 8 || s.indexOf('万') >= 0; }
 
 export function startOfDay(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
 export function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
