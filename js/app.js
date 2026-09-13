@@ -113,9 +113,11 @@ function recordRow(r, cm) {
   const sign = r.type === 'expense' ? '-' : '+';
   const cls = r.type === 'expense' ? 'exp' : 'inc';
   const ph = r.photo ? `<img class="thumb" src="${r.photo}">` : `<span class="emoji">${c.emoji}</span>`;
-  const sub = (r.note ? r.note + ' · ' : '') + c.name;
+  // 分类独占一行；备注排在分类下面（灰色小字）；时间放最下面。
+  // 以前是「备注 · 分类」挤在同一行，长备注（万宁买护肤品眼霜等等）会把整行撑成三行，很难看。
+  const note = r.note ? `<div class="n">${r.note}</div>` : '';
   const time = new Date(r.date).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  return `<div class="item">${ph}<div class="body"><div class="t">${sub}</div><div class="s">${time}</div></div><span class="amt ${cls}">${sign}${moneyShort(r.amount)}</span><button class="edit" data-id="${r.id}" title="修改">✏️</button><button class="del" data-id="${r.id}" title="删除">🗑️</button></div>`;
+  return `<div class="item">${ph}<div class="body"><div class="t">${c.name}</div>${note}<div class="s">${time}</div></div><span class="amt ${cls}">${sign}${moneyShort(r.amount)}</span><button class="edit" data-id="${r.id}" title="修改">✏️</button><button class="del" data-id="${r.id}" title="删除">🗑️</button></div>`;
 }
 
 /** 给记录列表统一挂上「改 / 删」两个动作 */
