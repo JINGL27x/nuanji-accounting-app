@@ -1,6 +1,6 @@
 // 本地存储层（IndexedDB）
 const DB_NAME = 'nuanji-ledger';
-const DB_VER = 1;
+const DB_VER = 2;   // v2：新增 accounts（账户）/ plans（定投计划）。老库升级时只加表，不动已有数据。
 let dbp = null;
 
 function openDB() {
@@ -16,6 +16,8 @@ function openDB() {
       if (!db.objectStoreNames.contains('categories')) db.createObjectStore('categories', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('budgets')) db.createObjectStore('budgets', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('quick')) db.createObjectStore('quick', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('accounts')) db.createObjectStore('accounts', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('plans')) db.createObjectStore('plans', { keyPath: 'id' });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -57,6 +59,16 @@ const DEFAULT_CATS = [
   { type: 'income', name: '其他收入', emoji: '🪙', color: '#8FD98F' },
 ];
 
+// 默认账户（钱平时放在哪几个地方）。initial = 开户时的金额，用户第一次用时填。
+// 前四个是日常花钱的地方；「基金」是理财账户 —— 定投要有个去处，先给一个，不要可以删。
+const DEFAULT_ACCOUNTS = [
+  { name: '微信', emoji: '💚', color: '#3ED35A', kind: 'normal' },
+  { name: '支付宝', emoji: '💙', color: '#5BA8FF', kind: 'normal' },
+  { name: '银行卡', emoji: '💳', color: '#B98CFF', kind: 'normal' },
+  { name: '现金', emoji: '💵', color: '#FFC15B', kind: 'normal' },
+  { name: '基金', emoji: '📈', color: '#F2703F', kind: 'invest' },
+];
+
 export async function seedIfEmpty() {
   const cats = await getAll('categories');
   if (cats.length === 0) {
@@ -64,7 +76,32 @@ export async function seedIfEmpty() {
       put('categories', { id: 'c' + i, name: c.name, type: c.type, emoji: c.emoji, color: c.color, hidden: false, order: i });
     });
   }
+  const accs = await getAll('accounts');
+  if (accs.length === 0) {
+    DEFAULT_ACCOUNTS.forEach((a, i) => {
+      put('accounts', {
+        id: 'a' + i, name: a.name, emoji: a.emoji, color: a.color,
+        initial: 0, order: i, hidden: false, kind: a.kind || 'normal', createdAt: Date.now(),
+      });
+    });
+  }
 }
+
+// ---------- 账户 ----------
+// 按 order 排好再返回 —— IndexedDB 的 getAll 是按主键（id）排的，
+// id 是 'a0'/'a1'/'a<时间戳>' 这种，自建账户会排在默认账户前面，顺序很跳。
+export async function getAllAccounts() {
+  const all = await getAll('accounts');
+  all.sort((a, b) => (a.order || 0) - (b.order || 0));
+  return all;
+}
+export async function addAccount(a) { return put('accounts', a); }
+export async function delAccount(id) { return del('accounts', id); }
+
+// ---------- 定投计划 ----------
+export async function getAllPlans() { return getAll('plans'); }
+export async function addPlan(p) { return put('plans', p); }
+export async function delPlan(id) { return del('plans', id); }
 
 export async function getCategories(type) {
   const all = await getAll('categories');
@@ -90,17 +127,22 @@ export async function deleteQuick(id) { return del('quick', id); }
 
 // 备份：导出全部 / 导入覆盖
 export async function exportAll() {
-  const [records, categories, budgets, quick] = await Promise.all([
+  const [records, categories, budgets, quick, accounts, plans] = await Promise.all([
     getAll('records'), getAll('categories'), getAll('budgets'), getAll('quick'),
+    getAll('accounts'), getAll('plans'),
   ]);
-  return { app: 'nuanji', version: 1, exportedAt: new Date().toISOString(), records, categories, budgets, quick };
+  return { app: 'nuanji', version: 2, exportedAt: new Date().toISOString(), records, categories, budgets, quick, accounts, plans };
 }
 export async function importAll(data, merge = false) {
   if (!merge) {
-    await Promise.all([clearStore('records'), clearStore('categories'), clearStore('budgets'), clearStore('quick')]);
+    await Promise.all([clearStore('records'), clearStore('categories'), clearStore('budgets'),
+      clearStore('quick'), clearStore('accounts'), clearStore('plans')]);
   }
   for (const r of data.records || []) await put('records', r);
   for (const c of data.categories || []) await put('categories', c);
   for (const b of data.budgets || []) await put('budgets', b);
   for (const q of data.quick || []) await put('quick', q);
+  for (const a of data.accounts || []) await put('accounts', a);
+  for (const p of data.plans || []) await put('plans', p);
+  await seedIfEmpty();   // 老备份里没有账户的话，补上默认的几个，免得页面空着
 }
