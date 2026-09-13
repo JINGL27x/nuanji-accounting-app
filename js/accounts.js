@@ -56,6 +56,28 @@ export function accountRecords(records, accountId) {
     .sort((a, b) => b.date - a.date);
 }
 
+/**
+ * 把账户整理成「大类 → 子账户」，给「先选大类、再选小钱包」用。
+ *   - 有 group 的按 group 聚在一起（微信 / 支付宝 / 银行卡…）；
+ *   - 没有 group 的（现金 / 基金 / 用户自建的），每个账户自己算一个大类。
+ * 传进来的 accounts 必须是已经按 order 排好的 —— 大类的先后顺序就取「第一次出现」的顺序。
+ */
+export function accountGroups(accounts) {
+  const map = new Map();
+  for (const a of accounts || []) {
+    const key = a.group || ('#' + a.id);
+    if (!map.has(key)) map.set(key, { key, name: a.group || a.name, accounts: [] });
+    map.get(key).accounts.push(a);
+  }
+  return [...map.values()];
+}
+
+/** 一个大类里所有账户的余额合计（「微信一共还有多少」） */
+export function groupBalance(group, bal) {
+  return (group && group.accounts ? group.accounts : [])
+    .reduce((s, a) => s + (bal[a.id] || 0), 0);
+}
+
 /** 某个账户在 [start, end] 这段时间里，实际花掉多少（只算普通支出，不看转账校准） */
 export function spentInRange(records, accountId, startTs, endTs) {
   return onlyNormal(records)
