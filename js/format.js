@@ -9,6 +9,13 @@ export function moneyShort(n) {
   const s = Number.isInteger(v) ? String(v) : v.toFixed(2);
   return '¥' + s;
 }
+/** 余额用：负号放在 ¥ 前面。'¥-120' 这种写法非常别扭，'−¥120' 才像钱。 */
+export function moneyNeg(n) {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  const abs = Math.abs(v);
+  const s = Number.isInteger(abs) ? String(abs) : abs.toFixed(2);
+  return (v < 0 ? '-¥' : '¥') + s;
+}
 /** 日历格子里那行金额。格子只有 36~44px 可用宽度，取舍如下：
     - 带 ¥ 和两位小数（金额看得准，符号也让「这是钱」一目了然）；
     - 上万改用「万」，否则 ¥12345.67 这种九位字符串必然超出；
