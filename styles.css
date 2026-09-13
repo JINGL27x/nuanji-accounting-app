@@ -346,6 +346,12 @@ body {
 }
 /* 时间降一号（11px），跟备注拉开层次：分类 > 备注 > 时间 */
 .item .body .s { font-size: 11px; color: var(--muted); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 转账那行「转出到 银行卡 · 还信用卡」在窄屏一行放不下，允许折两行（最多两行，再长才省略） */
+.item .body .n.wrap2 {
+  white-space: normal; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
 .item .amt { font-weight: 700; font-size: 16px; }
 .item .amt.exp { color: var(--accent-deep); }
 .item .amt.inc { color: var(--green); }
@@ -501,3 +507,99 @@ body {
   .view { padding-left: calc(16px + var(--safe-l)); padding-right: calc(16px + var(--safe-r)); padding-top: 4px; }
   .tabbar { padding-left: var(--safe-l); padding-right: var(--safe-r); }
 }
+
+/* ============ 我的钱（账户） ============ */
+
+/* 总额 */
+.acc-total { text-align: center; padding: 8px 0 4px; }
+.acc-total .k { font-size: 13px; color: var(--muted); }
+.acc-total .v { font-size: 40px; font-weight: 800; letter-spacing: -.5px; line-height: 1.25; word-break: break-all; }
+.acc-total .v.neg { color: var(--danger); }
+.acc-total .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.acc-total .acc-ico.lg { width: 52px; height: 52px; font-size: 27px; margin: 0 auto 6px; }
+
+/* 账户卡片：两列。列宽必须 minmax(0,1fr) —— 1fr 的最小宽度是内容宽度，
+   金额/名字长的账户会把这一列顶宽，两列加起来超出卡片（就出现横向溢出）。 */
+.acc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.acc-card {
+  border: none; cursor: pointer; color: var(--ink); text-align: left;
+  background: var(--surface); border-radius: var(--radius-sm);
+  padding: 13px 14px; box-shadow: var(--shadow-sm);
+  display: flex; flex-direction: column; align-items: stretch; gap: 5px;
+  min-width: 0; min-height: 112px;
+  transition: transform .12s;
+}
+.acc-card:active { transform: scale(.97); }
+.acc-ico {
+  width: 40px; height: 40px; border-radius: 13px; flex: none; align-self: flex-start;
+  display: flex; align-items: center; justify-content: center; font-size: 21px;
+}
+.acc-nm { display: flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; min-width: 0; }
+.acc-nm .nm-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.acc-nm .tag {
+  flex: none; font-style: normal; font-size: 10px; font-weight: 700; color: #fff;
+  background: var(--accent); border-radius: 999px; padding: 1px 6px;
+}
+.acc-nm .tag[hidden] { display: none; }
+.acc-bal {
+  font-size: 19px; font-weight: 800;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.acc-bal.neg { color: var(--danger); }
+.acc-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acc-card.add {
+  align-items: center; justify-content: center; gap: 4px;
+  border: 1.5px dashed var(--line); background: none; box-shadow: none;
+  color: var(--accent-deep); font-weight: 700; font-size: 13px;
+}
+.acc-card.add .plus { font-size: 24px; line-height: 1; }
+
+/* 账户页里的操作按钮一排 */
+.acc-acts { display: flex; gap: 8px; margin-top: 14px; }
+.acc-acts .btn { flex: 1; padding: 11px 6px; font-size: 13px; }
+
+/* 记一笔 / 转账 里的账户横向一行（横着滑，不占高度） */
+.acct-row {
+  display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.acct-row::-webkit-scrollbar { display: none; }
+.acct {
+  flex: none; border: 1.5px solid var(--line); background: var(--surface);
+  border-radius: var(--radius-pill); padding: 8px 14px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; color: var(--ink);
+  font-size: 13px; font-weight: 600; transition: transform .12s, background .15s;
+  box-shadow: var(--shadow-sm);
+}
+.acct .e { font-size: 15px; }
+.acct.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-deep); }
+.acct:active { transform: scale(.95); }
+
+/* 定投卡片 */
+.plan {
+  width: 100%; border: none; cursor: pointer; text-align: left; color: var(--ink);
+  background: var(--surface); border-radius: var(--radius-sm);
+  padding: 12px 14px; box-shadow: var(--shadow-sm);
+  display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
+  min-width: 0; transition: transform .12s;
+}
+.plan:active { transform: scale(.97); }
+.plan.off { opacity: .55; }
+.plan .body { flex: 1; min-width: 0; }
+.plan .body .t { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plan .body .n { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plan .a { flex: none; font-weight: 800; font-size: 15px; color: var(--accent-deep); }
+
+/* 「每周几」选择：7 个圆角小格 */
+.week-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.week-row button {
+  border: none; cursor: pointer; padding: 0; aspect-ratio: 1 / 1; min-width: 0;
+  border-radius: 14px; background: var(--surface-2); color: var(--ink-soft);
+  font-size: 13px; font-weight: 700; transition: transform .12s;
+}
+.week-row button.on { background: var(--accent); color: #fff; }
+.week-row button:active { transform: scale(.92); }
+
+/* 校准弹卡里「软件里现在算的是」那一行 */
+.calib-cur { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+.calib-cur .a { font-weight: 800; color: var(--accent-deep); }
