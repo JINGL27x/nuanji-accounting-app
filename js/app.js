@@ -2,7 +2,7 @@ import * as db from './db.js';
 import * as speech from './speech.js';
 import * as update from './update.js';
 import { donutSVG } from './charts.js';
-import { money, moneyShort, dayKey, parseDayKey, rangeFor, monthRange, rangeLabel, uid } from './format.js';
+import { money, moneyShort, moneyCell, dayKey, parseDayKey, rangeFor, monthRange, rangeLabel, uid } from './format.js';
 
 const view = document.getElementById('view');
 const appbarTitle = document.getElementById('appbar-title');
@@ -556,7 +556,7 @@ function calendarHTML(d, map) {
     const k = `${y}-${String(m + 1).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
     const t = map[k];
     const cls = `cal-day${k === todayKey ? ' today' : ''}${k === selKey ? ' sel' : ''}${t && t.has ? ' has' : ''}`;
-    const amt = t ? `<span class="amt">${moneyShort(t.exp)}</span>` : '';
+    const amt = t ? `<span class="amt">${moneyCell(t.exp)}</span>` : '';
     cells += `<button class="${cls}" data-k="${k}"><span class="d">${dd}</span>${amt}</button>`;
   }
   const trail = (7 - ((startDow + daysInMonth) % 7)) % 7;
