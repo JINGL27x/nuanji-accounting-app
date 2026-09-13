@@ -6,6 +6,7 @@ import { money, moneyShort, moneyNeg, moneyCell, cellAmtLong, dayKey, parseDayKe
 import {
   ACCOUNT_COLORS, isNormal, onlyNormal, accountBalances, totalBalance,
   accountRecords, spentInRange, dueDates, runRecordId, nextRunDate, freqLabel,
+  accountGroups, groupBalance,
 } from './accounts.js';
 
 const view = document.getElementById('view');
@@ -572,7 +573,7 @@ async function openEntrySheet(prefill = {}) {
     </div>
     <div class="card-title mt16">分类</div>
     <div class="cat-grid" id="catGrid"></div>
-    ${acctRowHTML(accs)}
+    ${acctPickerHTML(accountGroups(accs))}
     <div class="field mt16"><label>备注</label><textarea id="note" class="textarea" placeholder="说点什么…">${note}</textarea></div>
     <div class="field"><label>小票照片（可选）</label><input type="file" id="photo" accept="image/*" capture="environment"></div>
     <div id="thumbBox" class="mt8">${photo ? `<img class="thumb" src="${photo}">` : ''}</div>
@@ -583,14 +584,14 @@ async function openEntrySheet(prefill = {}) {
   openSheet(html, (root, close) => {
     const grid = root.querySelector('#catGrid');
     bindAmountInput(root.querySelector('#amt'));   // 金额框只让输数字（中文输入法也能打汉字，必须自己拦）
-    bindAcctRow(root, accs, () => acctId, (id) => { acctId = id; }, () => (type === 'income' ? '钱进哪里' : '钱从哪出'));
+    bindAcctPicker(root, accountGroups(accs), () => acctId, (id) => { acctId = id; }, () => (type === 'income' ? '钱进哪里' : '钱从哪出'));
     const renderGrid = () => { grid.innerHTML = catTiles(cats.filter((c) => c.type === type), catId); grid.querySelectorAll('.cat').forEach((b) => b.onclick = () => { catId = b.dataset.id; renderGrid(); }); };
     renderGrid();
     root.querySelectorAll('#typeSeg button').forEach((b) => b.onclick = () => {
       type = b.dataset.t;
       root.querySelectorAll('#typeSeg button').forEach((x) => x.classList.toggle('on', x === b));
       catId = (cats.find((c) => c.type === type) || {}).id; renderGrid();
-      if (root['__sync_acctRow']) root['__sync_acctRow']();   // 标签跟着改成「钱从哪出 / 钱进哪里」
+      if (root['__sync_acct']) root['__sync_acct']();      // 标签跟着改成「钱从哪出 / 钱进哪里」
     });
     const ph = root.querySelector('#photo');
     ph.addEventListener('change', async () => { const f = ph.files[0]; if (f) { photo = await resizeImage(f); root.querySelector('#thumbBox').innerHTML = `<img class="thumb" src="${photo}">`; } });
@@ -612,23 +613,48 @@ async function openEntrySheet(prefill = {}) {
   });
 }
 
-/** 账户横向一行（横着滑，不占高度）。key 用来在同一张弹卡里放两行（转账：转出 + 转入） */
-function acctRowHTML(accs, key = 'acctRow', title = '钱从哪出') {
-  if (!accs || accs.length === 0) return '';
-  return `<div class="card-title mt16" id="${key}Title">${title}</div><div class="acct-row" id="${key}"></div>`;
+/** 两级账户选择器：「先选大类（微信/支付宝/银行卡/现金…），再选里面的哪个小钱包」。
+ *  key 让同一张弹卡里能放两个（转账的「转出」「转入」、定投的「投到哪」「从哪扣」）。
+ *  只有一个账户的大类不显示第二行 —— 点一下就直接选中（现金、只有一张卡时的银行卡）。 */
+function acctPickerHTML(groups, key = 'acct', title = '钱从哪出') {
+  if (!groups || groups.length === 0) return '';
+  return `<div class="card-title mt16" id="${key}Title">${title}</div>
+    <div class="acct-row" id="${key}G"></div>
+    <div class="card-title mt16" id="${key}AT" hidden></div>
+    <div class="acct-row" id="${key}A" hidden></div>`;
 }
-/** 绑定账户行：选中态 + 标题可随收支切换 */
-function bindAcctRow(root, accs, getSel, setSel, titleFn, key = 'acctRow') {
-  const row = root.querySelector('#' + key);
-  if (!row) return;
+/** 第二行的小标题：「微信里的哪个」；银行卡说「哪张」 */
+function subTitle(name) {
+  return name + '里的哪' + (name === '银行卡' ? '张' : '个');
+}
+function bindAcctPicker(root, groups, getSel, setSel, titleFn, key = 'acct') {
+  const gRow = root.querySelector('#' + key + 'G');
+  if (!gRow || !groups.length) return;
   const title = root.querySelector('#' + key + 'Title');
+  const aRow = root.querySelector('#' + key + 'A');
+  const aTitle = root.querySelector('#' + key + 'AT');
+  const groupOf = (id) => groups.find((g) => g.accounts.some((a) => a.id === id)) || groups[0];
+
   const sync = () => {
     if (title && titleFn) title.textContent = titleFn();
-    const sel = getSel();
-    row.innerHTML = accs.map((a) => `<button class="acct${a.id === sel ? ' sel' : ''}" data-id="${a.id}"><span class="e">${a.emoji}</span><span class="nm">${a.name}</span></button>`).join('');
-    row.querySelectorAll('.acct[data-id]').forEach((b) => {
-      b.onclick = () => { setSel(b.dataset.id); sync(); };
+    const cur = groupOf(getSel());
+    gRow.innerHTML = groups.map((g) => `<button class="acct${g.key === cur.key ? ' sel' : ''}" data-g="${g.key}">${g.name}</button>`).join('');
+    gRow.querySelectorAll('.acct[data-g]').forEach((b) => {
+      b.onclick = () => {
+        const g = groups.find((x) => x.key === b.dataset.g);
+        if (g) setSel(g.accounts[0].id);      // 切大类时先落在它的第一个小钱包上
+        sync();
+      };
     });
+    const many = cur.accounts.length >= 2;    // 只有一个小钱包就不用问第二遍
+    if (aTitle) { aTitle.hidden = !many; aTitle.textContent = subTitle(cur.name); }
+    if (aRow) {
+      aRow.hidden = !many;
+      aRow.innerHTML = many ? cur.accounts.map((a) => `<button class="acct${a.id === getSel() ? ' sel' : ''}" data-id="${a.id}"><span class="e">${a.emoji}</span>${a.name}</button>`).join('') : '';
+      aRow.querySelectorAll('.acct[data-id]').forEach((b) => {
+        b.onclick = () => { setSel(b.dataset.id); sync(); };
+      });
+    }
   };
   root['__sync_' + key] = sync;
   sync();
@@ -664,9 +690,15 @@ function accountCardHTML(a, bal, spentM) {
   </button>`;
 }
 
+/** 账户在别处出现时的叫法：「微信 · 零钱」比光写「零钱」清楚 */
+function accLabel(a) {
+  if (!a) return '未指定';
+  return a.group ? a.group + ' · ' + a.name : a.name;
+}
+
 function planCardHTML(p, am) {
-  const from = (am[p.fromAccountId] || {}).name || '未指定';
-  const to = (am[p.toAccountId] || {}).name || '未指定';
+  const from = accLabel(am[p.fromAccountId]);
+  const to = accLabel(am[p.toAccountId]);
   const next = p.active ? nextRunDate(p) : null;
   const sub = freqLabel(p) + ' · ' + (p.active ? (next ? '下次 ' + (next.getMonth() + 1) + '月' + next.getDate() + '日' : '今天到期') : '已终止');
   return `<button class="plan${p.active ? '' : ' off'}" data-plan="${p.id}">
@@ -689,23 +721,38 @@ async function renderAccounts() {
     && accs.every((a) => !(Number(a.initial) > 0));
   const running = plans.filter((p) => p.active).length;
 
+  // 账户按「大类」排：微信下面 零钱 / 零钱通；支付宝下面 余额 / 余额宝 / 小荷包；
+  // 银行卡下面几张卡；现金、基金各自一类。只有 1 个账户的大类不显示组头（省得重复）。
+  const groups = accountGroups(accs);
+  const cardsHTML = groups.map((g) => {
+    const cards = g.accounts.map((a) => accountCardHTML(a, bal, spentM)).join('');
+    if (g.accounts.length < 2) return cards;
+    const first = g.accounts[0];
+    return `<div class="acc-grouphead">
+        <span class="dot" style="background:${first.color}"></span>
+        <span class="nm">${g.name}</span>
+        <span class="sum">小计 ${moneyNeg(groupBalance(g, bal))}</span>
+        <button class="gadd" data-group="${g.name}" title="在「${g.name}」里再加一个">＋</button>
+      </div>${cards}`;
+  }).join('');
+
   view.innerHTML = `
     ${needSetup ? `<div class="card">
-      <div class="card-title">第一步：每个账户现在有多少钱</div>
-      <div class="hint-line">填你「现在」实际有多少钱就行（比如微信里还有 683.50）。填完之后你每记一笔，对应账户会自动加减，随时能看到还剩多少。</div>
+      <div class="card-title">第一步：每个地方现在有多少钱</div>
+      <div class="hint-line">填你「现在」实际有多少钱就行（比如微信零钱里还有 683.50）。填完之后你每记一笔，对应的地方会自动加减，随时能看到还剩多少。只填填得出来的，空着的不用管。</div>
       <button class="btn block" id="accSetup">✏️ 填现有金额</button>
     </div>` : ''}
     <div class="card">
       <div class="acc-total">
         <div class="k">我的钱 · 加起来</div>
         <div class="v${total < 0 ? ' neg' : ''}">${moneyNeg(total)}</div>
-        <div class="s">${accs.length} 个账户${running ? ' · ' + running + ' 个定投在跑' : ''}</div>
+        <div class="s">${groups.length} 个地方 · ${accs.length} 个钱包${running ? ' · ' + running + ' 个定投在跑' : ''}</div>
       </div>
     </div>
     <div class="card">
       <div class="card-title">账户 · 点进去看流水</div>
       <div class="acc-grid">
-        ${accs.map((a) => accountCardHTML(a, bal, spentM)).join('')}
+        ${cardsHTML}
         <button class="acc-card add" id="addAcc"><span class="plus">＋</span><span>添加账户</span></button>
       </div>
     </div>
@@ -728,6 +775,9 @@ async function renderAccounts() {
   view.querySelectorAll('.acc-card[data-id]').forEach((b) => {
     b.onclick = () => { location.hash = '#/acct/' + b.dataset.id; };
   });
+  view.querySelectorAll('.gadd[data-group]').forEach((b) => {
+    b.onclick = () => openAccountEditSheet(null, b.dataset.group);
+  });
   view.querySelectorAll('.plan[data-plan]').forEach((b) => {
     b.onclick = () => openPlanSheet(b.dataset.plan);
   });
@@ -738,7 +788,7 @@ async function renderAccountDetail() {
   const { accs, recs, am, bal } = await loadAccountWorld();
   const a = accs.find((x) => x.id === id);
   if (!a) { toast('这个账户不在了'); location.hash = '#/accounts'; return; }
-  appbarTitle.textContent = a.name + (a.kind === 'invest' ? ' · 理财' : '');
+  appbarTitle.textContent = (a.group ? a.group + ' · ' : '') + a.name + (a.kind === 'invest' ? ' · 理财' : '');
 
   const cm = {}; (await db.getAllCategories()).forEach((c) => { cm[c.id] = c; });
   const v = bal[a.id] || 0;
@@ -755,7 +805,7 @@ async function renderAccountDetail() {
       <div class="acc-acts">
         <button class="btn soft" id="calib">🎯 校准余额</button>
         ${a.kind === 'invest' ? '<button class="btn soft" id="pnl">📈 记盈亏</button>' : ''}
-        <button class="btn soft" id="rename">✏️ 改名</button>
+        <button class="btn soft" id="rename">✏️ 编辑</button>
       </div>
     </div>
     <div class="card">
@@ -809,7 +859,7 @@ async function openSetupSheet() {
     <div class="hint-line">填你「现在」实际有多少钱。只填填得出来的，空着的不动。填完以后记账会自动加减，不用再管；哪天对不上数了，用「校准余额」改一次就行。</div>
     ${accs.map((a) => `<div class="row plain">
       <span class="acc-ico" style="background:${tint(a.color, .16)};width:36px;height:36px;font-size:19px">${a.emoji}</span>
-      <div style="flex:1;min-width:0"><div class="label">${a.name}</div><div class="sub">现在有</div></div>
+      <div style="flex:1;min-width:0"><div class="label">${a.group ? a.group + ' · ' + a.name : a.name}</div><div class="sub">现在有</div></div>
       <span style="color:var(--muted);font-weight:700">¥</span>
       <input class="input setup-in" style="width:116px;text-align:right" data-aid="${a.id}" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00">
     </div>`).join('')}
@@ -837,24 +887,41 @@ async function openSetupSheet() {
   });
 }
 
-/** 新建 / 修改账户 */
-async function openAccountEditSheet(a) {
+/** 新建 / 修改账户。presetGroup = 从某个大类的「＋」进来时，默认归到那一类 */
+async function openAccountEditSheet(a, presetGroup) {
   const editing = !!a;
+  const all = await db.getAllAccounts();
   let emoji = a ? a.emoji : '💳';
   let color = a ? (a.color || ACCOUNT_COLORS[0]) : ACCOUNT_COLORS[0];
   let kind = a ? (a.kind || 'normal') : 'normal';
+  let group = a ? (a.group || '') : (presetGroup || '');
+
+  // 归类候选：常见的几个 + 用户自己已经建过的组名
+  const cands = [''];
+  ['微信', '支付宝', '银行卡', '现金', '理财'].forEach((g) => { if (!cands.includes(g)) cands.push(g); });
+  all.forEach((x) => { if (x.group && !cands.includes(x.group)) cands.push(x.group); });
+
   const html = `<h3>${editing ? '改账户' : '添加账户'}</h3>
-    <div class="field"><label>名字</label><input id="an" class="input" placeholder="如：微信 / 招行卡 / 基金" value="${editing ? a.name : ''}"></div>
+    <div class="field"><label>名字</label><input id="an" class="input" placeholder="如：零钱 / 广发银行 / 基金" value="${editing ? a.name : ''}"></div>
     <div class="field"><label>图标（填一个 emoji 就行）</label><input id="ae" class="input" placeholder="💳" value="${emoji}"></div>
+    <div class="card-title">归到哪一类</div>
+    <div class="acct-row" id="gpick"></div>
+    <div class="hint-line">归类＝和谁排在一起。比如新加一张「建设银行」归到「银行卡」，它就会和「广发银行」归在一起、上面多一个合计；「不归类」就自己单独一格。<b>现金、基金这种只有一个的，不归类就行。</b></div>
     <div class="seg" id="kseg">
       <button data-k="normal" class="${kind === 'normal' ? 'on' : ''}">日常账户</button>
       <button data-k="invest" class="${kind === 'invest' ? 'on' : ''}">理财账户</button>
     </div>
-    <div class="hint-line">日常账户＝微信、支付宝、银行卡、现金；理财账户＝基金、股票，可以在这里记盈亏、也能当定投的去处。</div>
+    <div class="hint-line">日常账户＝零钱、余额、银行卡、现金；理财账户＝零钱通、余额宝、基金，可以在这里记盈亏、也能当定投的去处。</div>
     <div class="card-title">颜色</div>
     <div class="cat-grid" id="cgrid"></div>
     <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">保存</button></div>`;
   openSheet(html, (root, close) => {
+    const gpick = root.querySelector('#gpick');
+    const rg2 = () => {
+      gpick.innerHTML = cands.map((g) => `<button class="acct${g === group ? ' sel' : ''}" data-g="${g}">${g || '不归类'}</button>`).join('');
+      gpick.querySelectorAll('.acct[data-g]').forEach((b) => b.onclick = () => { group = b.dataset.g; rg2(); });
+    };
+    rg2();
     const grid = root.querySelector('#cgrid');
     const rg = () => {
       grid.innerHTML = ACCOUNT_COLORS.map((c) => `<button class="cat ${c === color ? 'sel' : ''}" data-c="${c}"><span class="emoji" style="background:${c};width:22px;height:22px;border-radius:50%"></span></button>`).join('');
@@ -871,12 +938,13 @@ async function openAccountEditSheet(a) {
       const name = root.querySelector('#an').value.trim();
       if (!name) { toast('请输入名字'); return; }
       if (editing) {
-        await db.addAccount(Object.assign({}, a, { name, emoji, color, kind }));
+        await db.addAccount(Object.assign({}, a, { name, emoji, color, kind, group }));
       } else {
-        const all = await db.getAllAccounts();
+        // 新账户排到最后（组内的位置也由 order 决定）
+        const maxOrder = all.reduce((m, x) => Math.max(m, Number(x.order) || 0), 0);
         await db.addAccount({
-          id: 'a' + Date.now(), name, emoji, color, kind,
-          initial: 0, order: all.length, hidden: false, createdAt: Date.now(),
+          id: 'a' + Date.now(), name, emoji, color, kind, group,
+          initial: 0, order: maxOrder + 1, hidden: false, createdAt: Date.now(),
         });
       }
       toast(editing ? '已修改 ✓' : '已添加 ✓'); close(); router();
@@ -889,12 +957,13 @@ async function openTransferSheet(prefill) {
   const pre = prefill || {};
   const { accs } = await loadAccountWorld();
   if (accs.length < 2) { toast('至少要有两个账户才能转账，先添一个吧'); return; }
+  const groups = accountGroups(accs);
   let fromId = pre.fromId || accs[0].id;
   let toId = pre.toId || (accs.find((a) => a.id !== fromId) || {}).id;
   const html = `<h3>转账</h3>
-    <div class="hint-line">钱从一个账户挪到另一个账户（比如微信提现到银行卡）。转账<b>只是钱换了地方，不算花钱</b>，不会进支出统计。</div>
-    ${acctRowHTML(accs, 'fromRow', '从哪个账户出')}
-    ${acctRowHTML(accs, 'toRow', '转到哪个账户')}
+    <div class="hint-line">钱从一个地方挪到另一个地方（比如微信提现到银行卡、零钱转到零钱通）。转账<b>只是钱换了地方，不算花钱</b>，不会进支出统计。</div>
+    ${acctPickerHTML(groups, 'from', '从哪儿出')}
+    ${acctPickerHTML(groups, 'to', '挪到哪儿')}
     <div style="text-align:center;margin:16px 0 4px">
       <span style="font-size:20px;color:var(--muted)">¥</span>
       <input id="amt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
@@ -903,8 +972,8 @@ async function openTransferSheet(prefill) {
     <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">转过去</button></div>`;
   openSheet(html, (root, close) => {
     bindAmountInput(root.querySelector('#amt'));
-    bindAcctRow(root, accs, () => fromId, (id) => { fromId = id; }, null, 'fromRow');
-    bindAcctRow(root, accs, () => toId, (id) => { toId = id; }, null, 'toRow');
+    bindAcctPicker(root, groups, () => fromId, (id) => { fromId = id; }, null, 'from');
+    bindAcctPicker(root, groups, () => toId, (id) => { toId = id; }, null, 'to');
     root.querySelector('#c').onclick = close;
     root.querySelector('#s').onclick = async () => {
       const amt = parseFloat(root.querySelector('#amt').value);
@@ -925,7 +994,7 @@ async function openTransferSheet(prefill) {
 async function openCalibrateSheet(a) {
   const { bal } = await loadAccountWorld();
   const cur = bal[a.id] || 0;
-  const html = `<h3>校准「${a.name}」的余额</h3>
+  const html = `<h3>校准「${a.group ? a.group + ' · ' : ''}${a.name}」的余额</h3>
     <div class="hint-line">打开微信 / 银行 App 看一眼真实余额，填在下面。差出来的那部分会记成一笔「校准」，往后就对得上数了。校准不算花钱。</div>
     <div class="calib-cur"><span class="muted">软件里现在算的是</span><span class="a">${moneyNeg(cur)}</span></div>
     <div class="field"><label>实际有多少钱</label>
@@ -995,10 +1064,13 @@ async function openPlanSheet(planId) {
   if (planId && !p) { toast('这个定投找不到了'); return; }
   if (accs.length < 2) { toast('定投要有「扣钱的账户」和「理财账户」，先添加一个吧'); return; }
 
-  let toId = p ? p.toAccountId : (((accs.find((a) => a.kind === 'invest') || accs[0]) || {}).id);
+  // 定投默认投到「不归类」的理财账户（一般就是基金），没有再退回第一个理财账户
+  let toId = p ? p.toAccountId
+    : (((accs.find((a) => a.kind === 'invest' && !a.group) || accs.find((a) => a.kind === 'invest') || accs[0]) || {}).id);
   let fromId = p ? p.fromAccountId : (((accs.find((a) => a.id !== toId) || accs[0]) || {}).id);
   let freq = p ? (p.freq || 'monthly') : 'monthly';
   let day = p ? Number(p.day) : new Date().getDate();
+  const groups = accountGroups(accs);
 
   const dayBoxHTML = () => (freq === 'weekly'
     ? `<div class="card-title mt16">每周哪天</div><div class="week-row" id="wrow">${['日', '一', '二', '三', '四', '五', '六'].map((w, i) => `<button data-d="${i}" class="${Number(day) === i ? 'on' : ''}">${w}</button>`).join('')}</div>`
@@ -1006,8 +1078,8 @@ async function openPlanSheet(planId) {
 
   const html = `<h3>${p ? '定投设置' : '添加定投'}</h3>
     <div class="hint-line">定投＝固定时间自动从某个账户转一笔钱到理财账户（基金 / 股票）。<b>不用你手动记，打开 App 就自动补上。</b></div>
-    ${acctRowHTML(accs, 'toRow', '投到哪个账户（基金 / 股票）')}
-    ${acctRowHTML(accs, 'fromRow', '从哪个账户扣钱')}
+    ${acctPickerHTML(groups, 'to', '投到哪儿（基金 / 股票）')}
+    ${acctPickerHTML(groups, 'from', '从哪儿扣钱')}
     <div style="text-align:center;margin:16px 0 4px">
       <span style="font-size:20px;color:var(--muted)">¥</span>
       <input id="amt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00" value="${p ? p.amount : ''}" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
@@ -1045,8 +1117,8 @@ async function openPlanSheet(planId) {
     });
 
     bindAmountInput(root.querySelector('#amt'));
-    bindAcctRow(root, accs, () => toId, (id) => { toId = id; }, null, 'toRow');
-    bindAcctRow(root, accs, () => fromId, (id) => { fromId = id; }, null, 'fromRow');
+    bindAcctPicker(root, groups, () => toId, (id) => { toId = id; }, null, 'to');
+    bindAcctPicker(root, groups, () => fromId, (id) => { fromId = id; }, null, 'from');
 
     root.querySelector('#c').onclick = close;
     root.querySelector('#s').onclick = async () => {
@@ -1705,6 +1777,13 @@ async function importBackup(e) {
 async function init() {
   if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {})); }
   await db.seedIfEmpty();
+  // 老库一次性升级：把「微信 / 支付宝」拆成里面的小钱包（只改名字，余额和流水原地不动）
+  try {
+    if (!(await db.getMeta('subsV1'))) {
+      const n = await db.migrateSubAccounts();
+      await db.setMeta('subsV1', { at: Date.now(), changed: n });
+    }
+  } catch (_) { /* 升级失败不该拦住 App；下次打开会重试 */ }
   try { await runDuePlans(); } catch (_) { /* 定投补记失败不该拦住整个 App */ }
   if (!location.hash) location.hash = '#/record';
   router();
