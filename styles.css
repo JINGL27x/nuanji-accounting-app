@@ -521,6 +521,24 @@ body {
 /* 账户卡片：两列。列宽必须 minmax(0,1fr) —— 1fr 的最小宽度是内容宽度，
    金额/名字长的账户会把这一列顶宽，两列加起来超出卡片（就出现横向溢出）。 */
 .acc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+/* 大类组头（微信 / 支付宝 / 银行卡）：横跨两列，带小计和「＋」。
+   只有 2 个以上账户的大类才显示组头 —— 只有一个的话组头纯属重复。 */
+.acc-grouphead {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 7px;
+  margin: 2px 2px -2px;
+  font-size: 13px; font-weight: 700; color: var(--ink-soft);
+}
+.acc-grouphead .dot { width: 8px; height: 8px; border-radius: 3px; flex: none; }
+.acc-grouphead .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-grouphead .sum { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--accent-deep); white-space: nowrap; }
+.acc-grouphead .gadd {
+  flex: none; border: none; cursor: pointer; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-deep);
+  font-size: 15px; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.acc-grouphead .gadd:active { transform: scale(.9); }
 .acc-card {
   border: none; cursor: pointer; color: var(--ink); text-align: left;
   background: var(--surface); border-radius: var(--radius-sm);
@@ -558,17 +576,22 @@ body {
 .acc-acts { display: flex; gap: 8px; margin-top: 14px; }
 .acc-acts .btn { flex: 1; padding: 11px 6px; font-size: 13px; }
 
-/* 记一笔 / 转账 里的账户横向一行（横着滑，不占高度） */
+/* 记一笔 / 转账 / 定投 里的账户两级选择：第一行选大类，第二行选具体哪个小钱包。
+   注意：.acct-row 自己写了 display:flex，会盖掉浏览器默认的 [hidden]{display:none}，
+   所以必须补一条 author 规则，否则 hidden 属性不起作用（第二行根本藏不掉）。 */
 .acct-row {
   display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px;
   -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
+.acct-row[hidden] { display: none; }
+.card-title[hidden] { display: none; }
 .acct-row::-webkit-scrollbar { display: none; }
 .acct {
   flex: none; border: 1.5px solid var(--line); background: var(--surface);
   border-radius: var(--radius-pill); padding: 8px 14px; cursor: pointer;
   display: flex; align-items: center; gap: 6px; color: var(--ink);
-  font-size: 13px; font-weight: 600; transition: transform .12s, background .15s;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+  transition: transform .12s, background .15s;
   box-shadow: var(--shadow-sm);
 }
 .acct .e { font-size: 15px; }
