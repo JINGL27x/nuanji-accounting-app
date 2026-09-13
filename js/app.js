@@ -26,6 +26,50 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => (t.hidden = true), 1800);
 }
 
+/* ---------- 键盘避让 ----------
+   手机弹出软键盘时可视区（visualViewport）立刻变矮。底部弹卡是 fixed 定位的，
+   不跟着收缩就会整张卡溢出到屏幕上方，而金额输入框正在弹卡上部 ——
+   于是"输入时看不见自己打的数字"。这里把实时可视区高度 / 顶部偏移 / 键盘高度
+   写进 CSS 变量，供 styles.css 的 .sheet-mask 使用。 */
+const vvApi = window.visualViewport;
+let revealTimer;
+/** 把弹卡里正在输入的控件滚进可视区（键盘动画结束后再算，否则位置还不准） */
+function revealFocus(delay = 60) {
+  clearTimeout(revealTimer);
+  revealTimer = setTimeout(() => {
+    const el = document.activeElement;
+    if (!el || !el.closest) return;
+    const sheet = el.closest('.sheet');
+    if (!sheet) return;
+    const sr = sheet.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    // 底部按钮是吸附在弹卡底部的（sticky），被它挡住的那截不算「看得见」
+    const foot = sheet.querySelector('.flex');
+    const limitB = sr.bottom - (foot ? foot.offsetHeight : 0) - 4;
+    const limitT = sr.top + 14;
+    if (r.top < limitT) sheet.scrollTop -= (limitT - r.top);
+    else if (r.bottom > limitB) sheet.scrollTop += (r.bottom - limitB + 6);
+  }, delay);
+}
+function syncViewport() {
+  const lh = window.innerHeight || 0;                                  // 版面高度（adjustResize 下会被键盘压小）
+  const raw = vvApi && vvApi.height ? vvApi.height : lh;                // 真实可视高度
+  const vt = vvApi && typeof vvApi.offsetTop === 'number' ? vvApi.offsetTop : 0;
+  if (!lh || !raw) return;
+  const root = document.documentElement;
+  root.style.setProperty('--vv-h', Math.round(Math.min(raw, lh)) + 'px');
+  root.style.setProperty('--vv-top', Math.round(vt) + 'px');
+  root.style.setProperty('--kb', Math.round(Math.max(0, lh - raw - vt)) + 'px');
+  revealFocus(80);
+}
+if (vvApi) {
+  vvApi.addEventListener('resize', syncViewport);
+  vvApi.addEventListener('scroll', syncViewport);   // iOS 打字时 WebKit 会自己滚动可视区
+}
+window.addEventListener('resize', syncViewport);
+window.addEventListener('orientationchange', () => setTimeout(syncViewport, 350));
+syncViewport();
+
 function openSheet(html, bind) {
   const mask = document.createElement('div');
   mask.className = 'sheet-mask';
@@ -33,6 +77,11 @@ function openSheet(html, bind) {
   document.body.appendChild(mask);
   const close = () => mask.remove();
   mask.addEventListener('click', (e) => { if (e.target === mask) close(); });
+  // 键盘一定会把视野挤小：聚焦的输入框要自己滚回可见处
+  mask.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) revealFocus(340);
+  });
   if (bind) bind(mask.querySelector('.sheet'), close);
   return close;
 }
