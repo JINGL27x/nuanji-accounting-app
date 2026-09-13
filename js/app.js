@@ -721,19 +721,32 @@ async function renderAccounts() {
     && accs.every((a) => !(Number(a.initial) > 0));
   const running = plans.filter((p) => p.active).length;
 
-  // 账户按「大类」排：微信下面 零钱 / 零钱通；支付宝下面 余额 / 余额宝 / 小荷包；
-  // 银行卡下面几张卡；现金、基金各自一类。只有 1 个账户的大类不显示组头（省得重复）。
+  // 每一类各自一块，类与类之间留出间隔 —— 不然排在后面的账户会顺着上一类的网格继续流，
+  // 看起来就像上一类里的第 N 个钱包（现金、银行卡会被误读成支付宝下面的）。
+  //   多个钱包的类：类名行（圆点 + 类名 + 小计 + 「＋」）+ 下面两列的钱包卡片
+  //   只有一个钱包的类：直接排成整行 —— 名字只说一遍，不用再顶一个和它同名的类名
   const groups = accountGroups(accs);
-  const cardsHTML = groups.map((g) => {
-    const cards = g.accounts.map((a) => accountCardHTML(a, bal, spentM)).join('');
-    if (g.accounts.length < 2) return cards;
+  const secsHTML = groups.map((g) => {
     const first = g.accounts[0];
-    return `<div class="acc-grouphead">
+    if (!first) return '';
+    if (g.accounts.length < 2) {
+      const v = bal[first.id] || 0;
+      return `<div class="acc-sec"><div class="acc-single" data-id="${first.id}">
+        <span class="acc-ico" style="background:${tint(first.color, .16)}">${first.emoji}</span>
+        <span class="acc-nm"><span class="nm-t">${first.name}</span><i class="tag"${first.kind === 'invest' ? '' : ' hidden'}>理财</i></span>
+        <span class="acc-bal${v < 0 ? ' neg' : ''}">${moneyNeg(v)}</span>
+        ${first.group ? `<button class="gadd" data-group="${first.group}" title="在「${first.group}」里再加一个">＋</button>` : ''}
+      </div></div>`;
+    }
+    return `<div class="acc-sec">
+      <div class="acc-sechead">
         <span class="dot" style="background:${first.color}"></span>
         <span class="nm">${g.name}</span>
         <span class="sum">小计 ${moneyNeg(groupBalance(g, bal))}</span>
         <button class="gadd" data-group="${g.name}" title="在「${g.name}」里再加一个">＋</button>
-      </div>${cards}`;
+      </div>
+      <div class="acc-grid">${g.accounts.map((a) => accountCardHTML(a, bal, spentM)).join('')}</div>
+    </div>`;
   }).join('');
 
   view.innerHTML = `
@@ -751,10 +764,8 @@ async function renderAccounts() {
     </div>
     <div class="card">
       <div class="card-title">账户 · 点进去看流水</div>
-      <div class="acc-grid">
-        ${cardsHTML}
-        <button class="acc-card add" id="addAcc"><span class="plus">＋</span><span>添加账户</span></button>
-      </div>
+      <div class="acc-secs">${secsHTML}</div>
+      <button class="acc-add" id="addAcc"><span class="plus">＋</span><span>添加账户</span></button>
     </div>
     <div class="card">
       <div class="card-title">定投</div>
@@ -772,11 +783,12 @@ async function renderAccounts() {
   if (s) s.onclick = () => openSetupSheet();
   view.querySelector('#addAcc').onclick = () => openAccountEditSheet(null);
   view.querySelector('#addPlan').onclick = () => openPlanSheet(null);
-  view.querySelectorAll('.acc-card[data-id]').forEach((b) => {
+  view.querySelectorAll('.acc-card[data-id], .acc-single[data-id]').forEach((b) => {
     b.onclick = () => { location.hash = '#/acct/' + b.dataset.id; };
   });
   view.querySelectorAll('.gadd[data-group]').forEach((b) => {
-    b.onclick = () => openAccountEditSheet(null, b.dataset.group);
+    // 整行那个「＋」是嵌在可点的行里面的，别让点击冒泡上去把行也点了
+    b.onclick = (e) => { e.stopPropagation(); openAccountEditSheet(null, b.dataset.group); };
   });
   view.querySelectorAll('.plan[data-plan]').forEach((b) => {
     b.onclick = () => openPlanSheet(b.dataset.plan);
@@ -1778,10 +1790,12 @@ async function init() {
   if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {})); }
   await db.seedIfEmpty();
   // 老库一次性升级：把「微信 / 支付宝」拆成里面的小钱包（只改名字，余额和流水原地不动）
+  // 开关从 subsV1 换成 subsV2 —— 已经升过一次的手机也会再跑一遍，
+  // 这回只是把小荷包的 🧧 图标换成 👛（改名那些分支都会自己跳过，安全的）。
   try {
-    if (!(await db.getMeta('subsV1'))) {
+    if (!(await db.getMeta('subsV2'))) {
       const n = await db.migrateSubAccounts();
-      await db.setMeta('subsV1', { at: Date.now(), changed: n });
+      await db.setMeta('subsV2', { at: Date.now(), changed: n });
     }
   } catch (_) { /* 升级失败不该拦住 App；下次打开会重试 */ }
   try { await runDuePlans(); } catch (_) { /* 定投补记失败不该拦住整个 App */ }
