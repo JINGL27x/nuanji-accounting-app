@@ -108,6 +108,42 @@ function catTiles(cats, selId) {
   return cats.map((c) => `<button class="cat ${c.id === selId ? 'sel' : ''}" data-id="${c.id}"><span class="emoji">${c.emoji}</span><span class="name">${c.name}</span></button>`).join('');
 }
 
+/** 金额输入框：只收数字和一个小数点，最多两位小数。
+    为什么不能只写 inputmode="decimal" —— 那只是「建议键盘」，中文输入法照样能把汉字塞进框里
+    （用户实测在金额里打出了「啊」）。所以必须自己清洗输入：
+    - beforeinput 先拦掉明显的非法字符（打字、粘贴都走这里）；
+    - input / compositionend 再兜一遍 —— 输入法的合成上屏是拦不住的，只能上屏后立刻擦掉；
+    - blur 收尾，保证离开时框里一定是干净的数字。 */
+function bindAmountInput(el) {
+  if (!el) return;
+  const clean = (raw) => {
+    let v = String(raw == null ? '' : raw).replace(/[^\d.]/g, '');   // 只留数字和小数点
+    const i = v.indexOf('.');
+    if (i >= 0) v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ''); // 多余的小数点去掉
+    let [a, b] = v.split('.');
+    a = a.replace(/^0+(?=\d)/, '').slice(0, 9);                     // 去前导零，整数最多 9 位
+    return b === undefined ? a : a + '.' + b.slice(0, 2);            // 最多两位小数
+  };
+  const fix = () => {
+    const raw = el.value;
+    const v = clean(raw);
+    if (v === raw) return;
+    const pos = el.selectionStart;                                   // 擦掉字符后光标要跟着回退
+    el.value = v;
+    const back = raw.length - v.length;
+    try { el.setSelectionRange(Math.max(0, pos - back), Math.max(0, pos - back)); } catch (_) { /* 忽略 */ }
+  };
+  el.addEventListener('beforeinput', (e) => {
+    // 只拦「敲进一个非法字符」（打字场景，拦掉就不会闪一下）。
+    // 粘贴 / 一次性插入多字符不拦 —— 拦整段会让「粘贴 ¥1,234.56」完全没反应，
+    // 交给下面的 input 清洗成 1234.56 才对。
+    if (e.data && e.data.length === 1 && /[^\d.]/.test(e.data)) e.preventDefault();
+  });
+  el.addEventListener('input', fix);
+  el.addEventListener('compositionend', fix);
+  el.addEventListener('blur', fix);
+}
+
 function recordRow(r, cm) {
   const c = cm[r.categoryId] || { emoji: '📦', name: '已删分类', color: '#B0A393' };
   const sign = r.type === 'expense' ? '-' : '+';
@@ -386,7 +422,7 @@ async function openVoiceListSheet(list, rawText) {
         <select class="vsel">${optionsHTML(r.categoryId)}</select>
         <div class="vnote">${r.note ? r.note : '（没说是什么）'}</div>
       </div>
-      <span class="vcur">¥</span><input class="vamt" inputmode="decimal" value="${r.amount}">
+      <span class="vcur">¥</span><input class="vamt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${r.amount}">
       <button class="vdel" title="去掉这笔">✕</button>
     </div>`;
 
@@ -411,7 +447,10 @@ async function openVoiceListSheet(list, rawText) {
           r.categoryId = sel.value;
           if (c) r.type = c.type;
         });
-        rowEl.querySelector('.vamt').addEventListener('input', (e) => {
+        // 必须先绑清洗器：它在同一次 input 事件里先执行，下面读到的才是干净的数字
+        const vamtEl = rowEl.querySelector('.vamt');
+        bindAmountInput(vamtEl);
+        vamtEl.addEventListener('input', (e) => {
           const v = parseFloat(e.target.value);
           r.amount = isNaN(v) ? 0 : v;
         });
@@ -469,7 +508,7 @@ async function openEntrySheet(prefill = {}) {
     </div>
     <div style="text-align:center;margin:10px 0 4px">
       <span style="font-size:20px;color:var(--muted)">¥</span>
-      <input id="amt" inputmode="decimal" placeholder="0.00" value="${amount}" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
+      <input id="amt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00" value="${amount}" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
     </div>
     <div class="card-title mt16">分类</div>
     <div class="cat-grid" id="catGrid"></div>
@@ -482,6 +521,7 @@ async function openEntrySheet(prefill = {}) {
     </div>`;
   openSheet(html, (root, close) => {
     const grid = root.querySelector('#catGrid');
+    bindAmountInput(root.querySelector('#amt'));   // 金额框只让输数字（中文输入法也能打汉字，必须自己拦）
     const renderGrid = () => { grid.innerHTML = catTiles(cats.filter((c) => c.type === type), catId); grid.querySelectorAll('.cat').forEach((b) => b.onclick = () => { catId = b.dataset.id; renderGrid(); }); };
     renderGrid();
     root.querySelectorAll('#typeSeg button').forEach((b) => b.onclick = () => {
@@ -513,11 +553,12 @@ async function openQuickSheet() {
   const html = `<h3>添加常用一笔</h3>
     <div class="seg" id="tseg"><button data-t="expense" class="on">支出</button><button data-t="income">收入</button></div>
     <div class="field"><label>名称</label><input id="ql" class="input" placeholder="如：午饭"></div>
-    <div class="field"><label>金额</label><input id="qa" class="input" inputmode="decimal" placeholder="0.00"></div>
+    <div class="field"><label>金额</label><input id="qa" class="input" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00"></div>
     <div class="card-title">分类</div><div class="cat-grid" id="cgrid"></div>
     <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">保存</button></div>`;
   openSheet(html, (root, close) => {
     const grid = root.querySelector('#cgrid');
+    bindAmountInput(root.querySelector('#qa'));   // 同上：金额框只收数字
     const rg = () => { grid.innerHTML = catTiles(cats.filter((c) => c.type === type), catId); grid.querySelectorAll('.cat').forEach((b) => b.onclick = () => { catId = b.dataset.id; rg(); }); };
     rg();
     root.querySelectorAll('#tseg button').forEach((b) => b.onclick = () => { type = b.dataset.t; root.querySelectorAll('#tseg button').forEach((x) => x.classList.toggle('on', x === b)); catId = (cats.find((c) => c.type === type) || {}).id; rg(); });
@@ -772,7 +813,7 @@ async function renderMe() {
     return `<div class="b-item">
       <div class="row plain">
         <div style="flex:1;min-width:0"><div class="label">${c.emoji} ${c.name}</div><div class="sub">本月已花 ${moneyShort(used)}${lim ? ` · 预算 ${moneyShort(lim)}` : ''}</div></div>
-        <input class="input" style="width:112px;text-align:right" data-bid="${c.id}" type="number" inputmode="decimal" placeholder="不设" value="${lim || ''}">
+        <input class="input" style="width:112px;text-align:right" data-bid="${c.id}" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="不设" value="${lim || ''}">
       </div>
       ${lim ? `<div class="bar" style="margin:0 2px 10px"><i class="${pctCls(used, lim)}" style="width:${pct}%"></i></div>` : ''}
     </div>`;
@@ -795,7 +836,7 @@ async function renderMe() {
       <div class="b-item">
         <div class="row plain">
           <div style="flex:1;min-width:0"><div class="label">本月总预算</div><div class="sub">本月已花 ${moneyShort(monthExp)}${bm.month ? ` · 预算 ${moneyShort(bm.month)}` : ''}</div></div>
-          <input class="input" id="bMonth" style="width:112px;text-align:right" type="number" inputmode="decimal" placeholder="不设" value="${bm.month || ''}">
+          <input class="input" id="bMonth" style="width:112px;text-align:right" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="不设" value="${bm.month || ''}">
         </div>
         ${bm.month ? `<div class="bar" style="margin:0 2px 10px"><i class="${pctCls(monthExp, bm.month)}" style="width:${monthPct}%"></i></div>` : ''}
       </div>
@@ -841,6 +882,9 @@ async function renderMe() {
   });
   view.querySelector('#addCat').onclick = openAddCat;
   view.querySelector('#expCsv').onclick = exportCSV;
+  // 预算框也统一成「只收数字」（原来 type="number" 还能输 1e5 这种科学计数法）
+  view.querySelectorAll('#catBudgets input[data-bid]').forEach(bindAmountInput);
+  bindAmountInput(view.querySelector('#bMonth'));
   view.querySelector('#saveBudget').onclick = async () => {
     const m = parseFloat(view.querySelector('#bMonth').value);
     await db.setBudget('month', isNaN(m) ? '' : m);
