@@ -70,7 +70,7 @@ const DEFAULT_ACCOUNTS = [
   { id: 'a1', name: '零钱通', emoji: '💰', color: '#2FB8A0', group: '微信', kind: 'invest', order: 2 },
   { id: 'a2', name: '余额', emoji: '💙', color: '#5BA8FF', group: '支付宝', kind: 'normal', order: 11 },
   { id: 'a3', name: '余额宝', emoji: '📈', color: '#7C9CFF', group: '支付宝', kind: 'invest', order: 12 },
-  { id: 'a4', name: '小荷包', emoji: '🧧', color: '#FF6FB5', group: '支付宝', kind: 'normal', order: 13 },
+  { id: 'a4', name: '小荷包', emoji: '👛', color: '#FF6FB5', group: '支付宝', kind: 'normal', order: 13 },
   { id: 'a5', name: '银行卡', emoji: '💳', color: '#B98CFF', group: '银行卡', kind: 'normal', order: 21 },
   { id: 'a6', name: '现金', emoji: '💵', color: '#FFC15B', group: '', kind: 'normal', order: 31 },
   { id: 'a7', name: '基金', emoji: '🪙', color: '#F2703F', group: '', kind: 'invest', order: 41 },
@@ -99,7 +99,8 @@ export async function seedIfEmpty() {
  * 原则是**只改名字、只补缺的，绝不碰余额和流水** ——
  * 因为 id 不变，原来记在这个账户上的每一笔账、以及你填的开户金额，都原地不动。
  * 只在「账户还是默认那个名字」时才动手，用户改过名字的一律不碰。幂等，跑几遍都一样。
- * 另外两件小事：把用户自建的账户排到最后（先后顺序不变），名字带「银行」的顺手归到「银行卡」。
+ * 另外三件小事：把用户自建的账户排到最后（先后顺序不变）、名字带「银行」的顺手归到「银行卡」、
+ * 把默认的 🧧 小荷包图标换成 👛。
  */
 export async function migrateSubAccounts() {
   const accs = await getAllAccounts();
@@ -125,7 +126,7 @@ export async function migrateSubAccounts() {
       initial: 0, order: 12, hidden: false, kind: 'invest', createdAt: Date.now(),
     });
     await put('accounts', {
-      id: 'as3', name: '小荷包', emoji: '🧧', color: '#FF6FB5', group: '支付宝',
+      id: 'as3', name: '小荷包', emoji: '👛', color: '#FF6FB5', group: '支付宝',
       initial: 0, order: 13, hidden: false, kind: 'normal', createdAt: Date.now(),
     });
     n += 3;
@@ -157,6 +158,14 @@ export async function migrateSubAccounts() {
     if (!a.group && /银行/.test(a.name || '')) patch.group = '银行卡';
     await put('accounts', Object.assign({}, a, patch));
     n++;
+  }
+
+  // 小荷包原来给的是 🧧（红包），在粉色底上太扎眼 —— 统一换成 👛（小钱包）。
+  // 同样只改「还是那个默认图标」的，用户自己换过的（或者改过名字的）一律不碰。
+  for (const a of accs) {
+    if (a.emoji === '🧧') {
+      await put('accounts', Object.assign({}, a, { emoji: '👛' })); n++;
+    }
   }
   return n;
 }
