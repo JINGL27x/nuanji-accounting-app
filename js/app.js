@@ -2,7 +2,11 @@ import * as db from './db.js';
 import * as speech from './speech.js';
 import * as update from './update.js';
 import { donutSVG } from './charts.js';
-import { money, moneyShort, moneyCell, cellAmtLong, dayKey, parseDayKey, rangeFor, monthRange, rangeLabel, uid } from './format.js';
+import { money, moneyShort, moneyNeg, moneyCell, cellAmtLong, dayKey, parseDayKey, rangeFor, monthRange, rangeLabel, uid } from './format.js';
+import {
+  ACCOUNT_COLORS, isNormal, onlyNormal, accountBalances, totalBalance,
+  accountRecords, spentInRange, dueDates, runRecordId, nextRunDate, freqLabel,
+} from './accounts.js';
 
 const view = document.getElementById('view');
 const appbarTitle = document.getElementById('appbar-title');
@@ -15,9 +19,24 @@ const COLOR_SW = ['#FF8A5B', '#5BA8FF', '#FF6FB5', '#B98CFF', '#FFC15B', '#FF7A7
 const routes = {
   '#/record': { title: '记一笔', render: renderRecord },
   '#/calendar': { title: '日历', render: renderCalendar },
+  '#/accounts': { title: '我的钱', render: renderAccounts },
+  '#/acct': { title: '账户', render: renderAccountDetail },
   '#/stats': { title: '统计', render: renderStats },
   '#/me': { title: '我的', render: renderMe },
 };
+
+/* 上一次用的支付账户 —— 记一笔时默认帮用户选好，省一次点击 */
+const LAST_ACCT_KEY = 'nuanji-last-account';
+function getLastAccount() { try { return localStorage.getItem(LAST_ACCT_KEY) || ''; } catch (_) { return ''; } }
+function setLastAccount(id) { try { localStorage.setItem(LAST_ACCT_KEY, id || ''); } catch (_) { /* 忽略 */ } }
+
+/** 分类表和账户表一次取好，转成 id→对象的映射，省得各页各写一遍 */
+async function loadMaps() {
+  const [cats, accs] = await Promise.all([db.getAllCategories(), db.getAllAccounts()]);
+  const cm = {}; cats.forEach((c) => { cm[c.id] = c; });
+  const am = {}; accs.forEach((a) => { am[a.id] = a; });
+  return { cats, accs, cm, am };
+}
 
 let toastTimer;
 function toast(msg) {
@@ -144,7 +163,7 @@ function bindAmountInput(el) {
   el.addEventListener('blur', fix);
 }
 
-function recordRow(r, cm) {
+function recordRow(r, cm, am) {
   const c = cm[r.categoryId] || { emoji: '📦', name: '已删分类', color: '#B0A393' };
   const sign = r.type === 'expense' ? '-' : '+';
   const cls = r.type === 'expense' ? 'exp' : 'inc';
@@ -153,7 +172,42 @@ function recordRow(r, cm) {
   // 以前是「备注 · 分类」挤在同一行，长备注（万宁买护肤品眼霜等等）会把整行撑成三行，很难看。
   const note = r.note ? `<div class="n">${r.note}</div>` : '';
   const time = new Date(r.date).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  return `<div class="item">${ph}<div class="body"><div class="t">${c.name}</div>${note}<div class="s">${time}</div></div><span class="amt ${cls}">${sign}${moneyShort(r.amount)}</span><button class="edit" data-id="${r.id}" title="修改">✏️</button><button class="del" data-id="${r.id}" title="删除">🗑️</button></div>`;
+  const an = (am && r.accountId && am[r.accountId]) ? am[r.accountId].name : '';
+  const meta = time + (an ? ' · ' + an : '');
+  return `<div class="item">${ph}<div class="body"><div class="t">${c.name}</div>${note}<div class="s">${meta}</div></div><span class="amt ${cls}">${sign}${moneyShort(r.amount)}</span><button class="edit" data-id="${r.id}" title="修改">✏️</button><button class="del" data-id="${r.id}" title="删除">🗑️</button></div>`;
+}
+
+/** 账户页里的流水行：转账、校准、盈亏都得显示，所以单独一套。
+ *  selfId = 当前正在看的账户。转账要按它说方向（「转出到银行卡」比「微信 → 银行卡」短也更好懂），
+ *  窄屏上不会一上来就被省略号吃掉后半截。
+ *  转账/校准/盈亏 不能用「记一笔」那套逻辑改，所以只有删除按钮；普通收支还有「修改」。 */
+function ledgerRow(r, cm, am, selfId) {
+  const amt = Number(r.amount) || 0;
+  const time = new Date(r.date).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+  const money1 = (v) => money(Math.abs(v));
+  const del = `<button class="del" data-id="${r.id}" title="删除">🗑️</button>`;
+  if (r.kind === 'transfer') {
+    const from = (am[r.accountId] || {}).name || '未指定';
+    const to = (am[r.toAccountId] || {}).name || '未指定';
+    let dir = from + ' → ' + to;
+    if (selfId && r.accountId === selfId) dir = '转出到 ' + to;
+    else if (selfId && r.toAccountId === selfId) dir = '从 ' + from + ' 转入';
+    const tag = r.planId ? '定投自动记的' : (r.note || '');
+    const sub = dir + (tag ? ' · ' + tag : '');
+    return `<div class="item"><span class="emoji">🔁</span><div class="body"><div class="t">转账</div><div class="n wrap2">${sub}</div><div class="s">${time}</div></div><span class="amt">${money1(amt)}</span>${del}</div>`;
+  }
+  if (r.kind === 'adjust') {
+    return `<div class="item"><span class="emoji">🎯</span><div class="body"><div class="t">余额校准</div>${r.note ? `<div class="n wrap2">${r.note}</div>` : ''}<div class="s">${time}</div></div><span class="amt ${amt < 0 ? 'exp' : 'inc'}">${amt < 0 ? '-' : '+'}${money1(amt)}</span>${del}</div>`;
+  }
+  if (r.kind === 'pnl') {
+    return `<div class="item"><span class="emoji">📈</span><div class="body"><div class="t">投资盈亏</div>${r.note ? `<div class="n wrap2">${r.note}</div>` : ''}<div class="s">${time}</div></div><span class="amt ${amt < 0 ? 'exp' : 'inc'}">${amt < 0 ? '-' : '+'}${money1(amt)}</span>${del}</div>`;
+  }
+  const c = cm[r.categoryId] || { emoji: '📦', name: '已删分类' };
+  const sign = r.type === 'expense' ? '-' : '+';
+  const cls = r.type === 'expense' ? 'exp' : 'inc';
+  const ph = r.photo ? `<img class="thumb" src="${r.photo}">` : `<span class="emoji">${c.emoji}</span>`;
+  const note = r.note ? `<div class="n">${r.note}</div>` : '';
+  return `<div class="item">${ph}<div class="body"><div class="t">${c.name}</div>${note}<div class="s">${time}</div></div><span class="amt ${cls}">${sign}${money1(amt)}</span><button class="edit" data-id="${r.id}" title="修改">✏️</button>${del}</div>`;
 }
 
 /** 给记录列表统一挂上「改 / 删」两个动作 */
@@ -171,14 +225,16 @@ function wireRecordList(listEl) {
     openEntrySheet({
       id: rec.id, amount: rec.amount, type: rec.type, categoryId: rec.categoryId,
       note: rec.note, photo: rec.photo, date: rec.date, createdAt: rec.createdAt,
+      accountId: rec.accountId,          // 带上原来的账户，别把「钱从哪出」丢了
     });
   }));
 }
 
 // ---------- 路由 ----------
 function router() {
-  const r = location.hash || '#/record';
-  const route = routes[r] ? r : '#/record';
+  const raw = location.hash || '#/record';
+  // 账户详情是带参数的地址（#/acct/xxxx），统一落到 '#/acct' 这个壳上
+  const route = routes[raw] ? raw : (raw.indexOf('#/acct/') === 0 ? '#/acct' : '#/record');
   state.route = route;
   appbarTitle.textContent = routes[route].title;
   appbarAction.hidden = true; appbarAction.textContent = ''; appbarAction.onclick = null;
@@ -190,7 +246,8 @@ window.addEventListener('hashchange', router);
 
 // ---------- 记一笔 ----------
 async function renderRecord() {
-  const records = await db.getRecords();
+  // 转账 / 校准 / 盈亏 不是消费，不进这里的任何统计
+  const records = onlyNormal(await db.getRecords());
   const now = new Date();
   const todayKey = dayKey(now);
   const [mStart, mEnd] = monthRange(now);
@@ -332,7 +389,7 @@ async function renderRecord() {
   view.querySelector('#manual').addEventListener('click', () => openEntrySheet({}));
 
   // 支出/收入卡片点击展开记录
-  const cats = await db.getAllCategories(); const cm = {}; cats.forEach((c) => (cm[c.id] = c));
+  const { cm, am } = await loadMaps();
   view.querySelectorAll('.tap-box').forEach((box) => {
     box.style.cursor = 'pointer';
     box.addEventListener('click', () => {
@@ -354,7 +411,7 @@ async function renderRecord() {
       if (filtered.length === 0) {
         listEl.innerHTML = `<div class="empty">暂无${type === 'expense' ? '支出' : '收入'}记录</div>`;
       } else {
-        listEl.innerHTML = `<div class="list">${filtered.map((r) => recordRow(r, cm)).join('')}</div>`;
+        listEl.innerHTML = `<div class="list">${filtered.map((r) => recordRow(r, cm, am)).join('')}</div>`;
         // 绑定删除
         listEl.querySelectorAll('.del').forEach((b) => {
           b.addEventListener('click', async (e) => {
@@ -489,10 +546,13 @@ async function openVoiceListSheet(list, rawText) {
 
 async function openEntrySheet(prefill = {}) {
   const cats = await db.getCategories();
+  const accs = await db.getAllAccounts();
   const editing = !!prefill.id;                     // 带 id = 改一条已有记录
   let type = prefill.type || 'expense';
   let amount = prefill.amount != null && prefill.amount !== '' ? String(prefill.amount) : '';
   let catId = prefill.categoryId || (cats.find((c) => c.type === type) || {}).id;
+  // 账户默认用「上次用过的那个」，没有就用第一个 —— 日常记账基本不用再点它
+  let acctId = prefill.accountId || getLastAccount() || (accs[0] || {}).id;
   let note = prefill.note || '';
   let photo = prefill.photo || null;
   const when = prefill.date || Date.now();          // 记到哪一天（日历「补一笔」会传过来）
@@ -512,6 +572,7 @@ async function openEntrySheet(prefill = {}) {
     </div>
     <div class="card-title mt16">分类</div>
     <div class="cat-grid" id="catGrid"></div>
+    ${acctRowHTML(accs)}
     <div class="field mt16"><label>备注</label><textarea id="note" class="textarea" placeholder="说点什么…">${note}</textarea></div>
     <div class="field"><label>小票照片（可选）</label><input type="file" id="photo" accept="image/*" capture="environment"></div>
     <div id="thumbBox" class="mt8">${photo ? `<img class="thumb" src="${photo}">` : ''}</div>
@@ -522,12 +583,14 @@ async function openEntrySheet(prefill = {}) {
   openSheet(html, (root, close) => {
     const grid = root.querySelector('#catGrid');
     bindAmountInput(root.querySelector('#amt'));   // 金额框只让输数字（中文输入法也能打汉字，必须自己拦）
+    bindAcctRow(root, accs, () => acctId, (id) => { acctId = id; }, () => (type === 'income' ? '钱进哪里' : '钱从哪出'));
     const renderGrid = () => { grid.innerHTML = catTiles(cats.filter((c) => c.type === type), catId); grid.querySelectorAll('.cat').forEach((b) => b.onclick = () => { catId = b.dataset.id; renderGrid(); }); };
     renderGrid();
     root.querySelectorAll('#typeSeg button').forEach((b) => b.onclick = () => {
       type = b.dataset.t;
       root.querySelectorAll('#typeSeg button').forEach((x) => x.classList.toggle('on', x === b));
       catId = (cats.find((c) => c.type === type) || {}).id; renderGrid();
+      if (root['__sync_acctRow']) root['__sync_acctRow']();   // 标签跟着改成「钱从哪出 / 钱进哪里」
     });
     const ph = root.querySelector('#photo');
     ph.addEventListener('change', async () => { const f = ph.files[0]; if (f) { photo = await resizeImage(f); root.querySelector('#thumbBox').innerHTML = `<img class="thumb" src="${photo}">`; } });
@@ -540,11 +603,513 @@ async function openEntrySheet(prefill = {}) {
         id: prefill.id || uid(), type, amount: Math.round(amt * 100) / 100,
         categoryId: catId, note: root.querySelector('#note').value.trim(), photo,
         date: when, createdAt: prefill.createdAt || Date.now(),
+        accountId: acctId || null,
       });
+      if (acctId) setLastAccount(acctId);          // 下次记一笔默认还用它
       toast(editing ? '已修改 ✓' : '已记下 ✓');
       close(); router();
     };
   });
+}
+
+/** 账户横向一行（横着滑，不占高度）。key 用来在同一张弹卡里放两行（转账：转出 + 转入） */
+function acctRowHTML(accs, key = 'acctRow', title = '钱从哪出') {
+  if (!accs || accs.length === 0) return '';
+  return `<div class="card-title mt16" id="${key}Title">${title}</div><div class="acct-row" id="${key}"></div>`;
+}
+/** 绑定账户行：选中态 + 标题可随收支切换 */
+function bindAcctRow(root, accs, getSel, setSel, titleFn, key = 'acctRow') {
+  const row = root.querySelector('#' + key);
+  if (!row) return;
+  const title = root.querySelector('#' + key + 'Title');
+  const sync = () => {
+    if (title && titleFn) title.textContent = titleFn();
+    const sel = getSel();
+    row.innerHTML = accs.map((a) => `<button class="acct${a.id === sel ? ' sel' : ''}" data-id="${a.id}"><span class="e">${a.emoji}</span><span class="nm">${a.name}</span></button>`).join('');
+    row.querySelectorAll('.acct[data-id]').forEach((b) => {
+      b.onclick = () => { setSel(b.dataset.id); sync(); };
+    });
+  };
+  root['__sync_' + key] = sync;
+  sync();
+}
+
+/* ==================== 我的钱 / 账户 / 定投 ==================== */
+
+/** 把 #RRGGBB 变成带透明度的 rgba —— 给账户图标做一层淡色底 */
+function tint(hex, a) {
+  const h = String(hex || '#B0A393').replace('#', '');
+  const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const r = parseInt(n.slice(0, 2), 16) || 0;
+  const g = parseInt(n.slice(2, 4), 16) || 0;
+  const b = parseInt(n.slice(4, 6), 16) || 0;
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+}
+
+/** 账户相关的数据一次取齐：账户表、全部记录、定投计划、算好的余额 */
+async function loadAccountWorld() {
+  const [accs, recs, plans] = await Promise.all([db.getAllAccounts(), db.getRecords(), db.getAllPlans()]);
+  accs.sort((a, b) => (a.order || 0) - (b.order || 0));
+  const am = {}; accs.forEach((a) => { am[a.id] = a; });
+  return { accs, recs, plans, am, bal: accountBalances(accs, recs) };
+}
+
+function accountCardHTML(a, bal, spentM) {
+  const v = bal[a.id] || 0;
+  return `<button class="acc-card" data-id="${a.id}">
+    <span class="acc-ico" style="background:${tint(a.color, .16)}">${a.emoji}</span>
+    <span class="acc-nm"><span class="nm-t">${a.name}</span><i class="tag"${a.kind === 'invest' ? '' : ' hidden'}>理财</i></span>
+    <span class="acc-bal${v < 0 ? ' neg' : ''}">${moneyNeg(v)}</span>
+    <span class="acc-sub">本月花 ${moneyShort(spentM[a.id] || 0)}</span>
+  </button>`;
+}
+
+function planCardHTML(p, am) {
+  const from = (am[p.fromAccountId] || {}).name || '未指定';
+  const to = (am[p.toAccountId] || {}).name || '未指定';
+  const next = p.active ? nextRunDate(p) : null;
+  const sub = freqLabel(p) + ' · ' + (p.active ? (next ? '下次 ' + (next.getMonth() + 1) + '月' + next.getDate() + '日' : '今天到期') : '已终止');
+  return `<button class="plan${p.active ? '' : ' off'}" data-plan="${p.id}">
+    <span class="acc-ico" style="background:${tint('#F2703F', .14)}">🔁</span>
+    <div class="body"><div class="t">${from} → ${to}</div><div class="n">${sub}</div></div>
+    <span class="a">${moneyShort(p.amount)}</span>
+  </button>`;
+}
+
+async function renderAccounts() {
+  const { accs, recs, plans, am, bal } = await loadAccountWorld();
+  const total = accs.reduce((s, a) => s + (bal[a.id] || 0), 0);
+  const [ms, me] = monthRange(new Date());
+  const mEnd = me.getTime() + 86400000 - 1;
+  const spentM = {};
+  accs.forEach((a) => { spentM[a.id] = spentInRange(recs, a.id, ms.getTime(), mEnd); });
+
+  // 第一次进来：所有账户都还是 0，也没校准过 —— 先请用户把现有金额填一遍
+  const needSetup = accs.length > 0 && !recs.some((r) => r.kind === 'adjust')
+    && accs.every((a) => !(Number(a.initial) > 0));
+  const running = plans.filter((p) => p.active).length;
+
+  view.innerHTML = `
+    ${needSetup ? `<div class="card">
+      <div class="card-title">第一步：每个账户现在有多少钱</div>
+      <div class="hint-line">填你「现在」实际有多少钱就行（比如微信里还有 683.50）。填完之后你每记一笔，对应账户会自动加减，随时能看到还剩多少。</div>
+      <button class="btn block" id="accSetup">✏️ 填现有金额</button>
+    </div>` : ''}
+    <div class="card">
+      <div class="acc-total">
+        <div class="k">我的钱 · 加起来</div>
+        <div class="v${total < 0 ? ' neg' : ''}">${moneyNeg(total)}</div>
+        <div class="s">${accs.length} 个账户${running ? ' · ' + running + ' 个定投在跑' : ''}</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">账户 · 点进去看流水</div>
+      <div class="acc-grid">
+        ${accs.map((a) => accountCardHTML(a, bal, spentM)).join('')}
+        <button class="acc-card add" id="addAcc"><span class="plus">＋</span><span>添加账户</span></button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">定投</div>
+      ${plans.length ? plans.map((p) => planCardHTML(p, am)).join('')
+        : '<div class="hint-line" style="margin-bottom:14px">还没有定投。定投＝每月固定一天，从某个账户自动转一笔钱到理财账户（基金 / 股票），不用你手动记。</div>'}
+      <button class="btn ghost block mt16" id="addPlan">＋ 添加定投</button>
+    </div>
+    <div class="hint-line" style="text-align:center;margin-bottom:18px">转账、校准余额在右上角「🔁 转账」和账户详情里<br>转账只是钱换个地方，不算花钱、不进支出统计</div>`;
+
+  appbarAction.hidden = false;
+  appbarAction.textContent = '🔁 转账';
+  appbarAction.onclick = () => openTransferSheet();
+
+  const s = view.querySelector('#accSetup');
+  if (s) s.onclick = () => openSetupSheet();
+  view.querySelector('#addAcc').onclick = () => openAccountEditSheet(null);
+  view.querySelector('#addPlan').onclick = () => openPlanSheet(null);
+  view.querySelectorAll('.acc-card[data-id]').forEach((b) => {
+    b.onclick = () => { location.hash = '#/acct/' + b.dataset.id; };
+  });
+  view.querySelectorAll('.plan[data-plan]').forEach((b) => {
+    b.onclick = () => openPlanSheet(b.dataset.plan);
+  });
+}
+
+async function renderAccountDetail() {
+  const id = location.hash.split('/')[2] || '';
+  const { accs, recs, am, bal } = await loadAccountWorld();
+  const a = accs.find((x) => x.id === id);
+  if (!a) { toast('这个账户不在了'); location.hash = '#/accounts'; return; }
+  appbarTitle.textContent = a.name + (a.kind === 'invest' ? ' · 理财' : '');
+
+  const cm = {}; (await db.getAllCategories()).forEach((c) => { cm[c.id] = c; });
+  const v = bal[a.id] || 0;
+  const list = accountRecords(recs, a.id);
+  const init = Math.round((Number(a.initial) || 0) * 100) / 100;
+
+  view.innerHTML = `
+    <div class="card">
+      <div class="acc-total">
+        <div class="acc-ico lg" style="background:${tint(a.color, .16)}">${a.emoji}</div>
+        <div class="v${v < 0 ? ' neg' : ''}">${moneyNeg(v)}</div>
+        <div class="s">开户时 ¥${init} · 共 ${list.length} 笔流水</div>
+      </div>
+      <div class="acc-acts">
+        <button class="btn soft" id="calib">🎯 校准余额</button>
+        ${a.kind === 'invest' ? '<button class="btn soft" id="pnl">📈 记盈亏</button>' : ''}
+        <button class="btn soft" id="rename">✏️ 改名</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">流水（${list.length}）</div>
+      ${list.length ? `<div class="list">${list.map((r) => ledgerRow(r, cm, am, a.id)).join('')}</div>`
+        : '<div class="empty">这个账户还没有流水<br><span style="font-size:12px">去「记一笔」选这个账户，或者点上面「校准余额」</span></div>'}
+    </div>
+    <div class="card">
+      <button class="btn danger block" id="delAcc">删除这个账户</button>
+      <div class="hint-line" style="margin:8px 0 0">删掉之后，这个账户的余额就不再显示；记过的账还留着，只是不再挂在账户上。</div>
+    </div>`;
+
+  appbarAction.hidden = false;
+  appbarAction.textContent = '🔁 转账';
+  appbarAction.onclick = () => openTransferSheet();
+
+  view.querySelector('#calib').onclick = () => openCalibrateSheet(a);
+  const pnlBtn = view.querySelector('#pnl');
+  if (pnlBtn) pnlBtn.onclick = () => openPnlSheet(a);
+  view.querySelector('#rename').onclick = () => openAccountEditSheet(a);
+  view.querySelector('#delAcc').onclick = async () => {
+    if (!confirm('删除账户「' + a.name + '」？\n\n记过的账还在，只是不再挂到这个账户上；这个账户的余额也不再显示。')) return;
+    await db.delAccount(a.id);
+    toast('已删除账户');
+    location.hash = '#/accounts';
+  };
+
+  // 流水行上的「改 / 删」
+  view.querySelectorAll('.edit').forEach((b) => b.onclick = async () => {
+    const rec = (await db.getRecords()).find((x) => x.id === b.dataset.id);
+    if (!rec) { toast('这条记录找不到了'); return; }
+    openEntrySheet({
+      id: rec.id, amount: rec.amount, type: rec.type, categoryId: rec.categoryId,
+      note: rec.note, photo: rec.photo, date: rec.date, createdAt: rec.createdAt,
+      accountId: rec.accountId,
+    });
+  });
+  view.querySelectorAll('.del').forEach((b) => b.onclick = async () => {
+    if (!confirm('确定删除这条记录？')) return;
+    await db.deleteRecord(b.dataset.id);
+    toast('已删除'); router();
+  });
+}
+
+/** 第一次用：把「现在每个账户有多少钱」一次填完。
+ *  填的是「当前余额」，所以要把这期间已经记过的流水倒推出去，换算成开户金额 ——
+ *  这样不管用户是刚装好还是已经用了一阵子，填完都能对上数。 */
+async function openSetupSheet() {
+  const { accs, bal } = await loadAccountWorld();
+  const html = `<h3>填一下现有金额</h3>
+    <div class="hint-line">填你「现在」实际有多少钱。只填填得出来的，空着的不动。填完以后记账会自动加减，不用再管；哪天对不上数了，用「校准余额」改一次就行。</div>
+    ${accs.map((a) => `<div class="row plain">
+      <span class="acc-ico" style="background:${tint(a.color, .16)};width:36px;height:36px;font-size:19px">${a.emoji}</span>
+      <div style="flex:1;min-width:0"><div class="label">${a.name}</div><div class="sub">现在有</div></div>
+      <span style="color:var(--muted);font-weight:700">¥</span>
+      <input class="input setup-in" style="width:116px;text-align:right" data-aid="${a.id}" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00">
+    </div>`).join('')}
+    <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">保存</button></div>`;
+  openSheet(html, (root, close) => {
+    root.querySelectorAll('.setup-in').forEach(bindAmountInput);
+    root.querySelector('#c').onclick = close;
+    root.querySelector('#s').onclick = async () => {
+      let n = 0;
+      for (const inp of root.querySelectorAll('.setup-in')) {
+        const aid = inp.dataset.aid;
+        const a = accs.find((x) => x.id === aid); if (!a) continue;
+        const raw = inp.value.trim();
+        if (raw === '') continue;                        // 没填的账户不动
+        const want = parseFloat(raw) || 0;
+        const cur = bal[aid] || 0;                       // 现在算出来的余额
+        const delta = Math.round((want - cur) * 100) / 100;
+        if (delta === 0) continue;
+        await db.addAccount(Object.assign({}, a, { initial: Math.round(((Number(a.initial) || 0) + delta) * 100) / 100 }));
+        n++;
+      }
+      toast(n ? '好啦，以后自动加减 ✓' : '没有变化');
+      close(); router();
+    };
+  });
+}
+
+/** 新建 / 修改账户 */
+async function openAccountEditSheet(a) {
+  const editing = !!a;
+  let emoji = a ? a.emoji : '💳';
+  let color = a ? (a.color || ACCOUNT_COLORS[0]) : ACCOUNT_COLORS[0];
+  let kind = a ? (a.kind || 'normal') : 'normal';
+  const html = `<h3>${editing ? '改账户' : '添加账户'}</h3>
+    <div class="field"><label>名字</label><input id="an" class="input" placeholder="如：微信 / 招行卡 / 基金" value="${editing ? a.name : ''}"></div>
+    <div class="field"><label>图标（填一个 emoji 就行）</label><input id="ae" class="input" placeholder="💳" value="${emoji}"></div>
+    <div class="seg" id="kseg">
+      <button data-k="normal" class="${kind === 'normal' ? 'on' : ''}">日常账户</button>
+      <button data-k="invest" class="${kind === 'invest' ? 'on' : ''}">理财账户</button>
+    </div>
+    <div class="hint-line">日常账户＝微信、支付宝、银行卡、现金；理财账户＝基金、股票，可以在这里记盈亏、也能当定投的去处。</div>
+    <div class="card-title">颜色</div>
+    <div class="cat-grid" id="cgrid"></div>
+    <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">保存</button></div>`;
+  openSheet(html, (root, close) => {
+    const grid = root.querySelector('#cgrid');
+    const rg = () => {
+      grid.innerHTML = ACCOUNT_COLORS.map((c) => `<button class="cat ${c === color ? 'sel' : ''}" data-c="${c}"><span class="emoji" style="background:${c};width:22px;height:22px;border-radius:50%"></span></button>`).join('');
+      grid.querySelectorAll('.cat').forEach((b) => b.onclick = () => { color = b.dataset.c; rg(); });
+    };
+    rg();
+    root.querySelectorAll('#kseg button').forEach((b) => b.onclick = () => {
+      kind = b.dataset.k;
+      root.querySelectorAll('#kseg button').forEach((x) => x.classList.toggle('on', x === b));
+    });
+    root.querySelector('#ae').addEventListener('input', (e) => { emoji = e.target.value.trim() || '💳'; });
+    root.querySelector('#c').onclick = close;
+    root.querySelector('#s').onclick = async () => {
+      const name = root.querySelector('#an').value.trim();
+      if (!name) { toast('请输入名字'); return; }
+      if (editing) {
+        await db.addAccount(Object.assign({}, a, { name, emoji, color, kind }));
+      } else {
+        const all = await db.getAllAccounts();
+        await db.addAccount({
+          id: 'a' + Date.now(), name, emoji, color, kind,
+          initial: 0, order: all.length, hidden: false, createdAt: Date.now(),
+        });
+      }
+      toast(editing ? '已修改 ✓' : '已添加 ✓'); close(); router();
+    };
+  });
+}
+
+/** 转账：钱从一个账户挪到另一个账户。不算花钱，绝不进支出统计。 */
+async function openTransferSheet(prefill) {
+  const pre = prefill || {};
+  const { accs } = await loadAccountWorld();
+  if (accs.length < 2) { toast('至少要有两个账户才能转账，先添一个吧'); return; }
+  let fromId = pre.fromId || accs[0].id;
+  let toId = pre.toId || (accs.find((a) => a.id !== fromId) || {}).id;
+  const html = `<h3>转账</h3>
+    <div class="hint-line">钱从一个账户挪到另一个账户（比如微信提现到银行卡）。转账<b>只是钱换了地方，不算花钱</b>，不会进支出统计。</div>
+    ${acctRowHTML(accs, 'fromRow', '从哪个账户出')}
+    ${acctRowHTML(accs, 'toRow', '转到哪个账户')}
+    <div style="text-align:center;margin:16px 0 4px">
+      <span style="font-size:20px;color:var(--muted)">¥</span>
+      <input id="amt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
+    </div>
+    <div class="field mt16"><label>备注（可选）</label><input id="note" class="input" placeholder="如：还信用卡"></div>
+    <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">转过去</button></div>`;
+  openSheet(html, (root, close) => {
+    bindAmountInput(root.querySelector('#amt'));
+    bindAcctRow(root, accs, () => fromId, (id) => { fromId = id; }, null, 'fromRow');
+    bindAcctRow(root, accs, () => toId, (id) => { toId = id; }, null, 'toRow');
+    root.querySelector('#c').onclick = close;
+    root.querySelector('#s').onclick = async () => {
+      const amt = parseFloat(root.querySelector('#amt').value);
+      if (!(amt > 0)) { toast('请输入金额'); return; }
+      if (fromId === toId) { toast('两个账户不能是同一个'); return; }
+      await db.addRecord({
+        id: uid(), kind: 'transfer', type: 'transfer',
+        amount: Math.round(amt * 100) / 100,
+        accountId: fromId, toAccountId: toId, note: root.querySelector('#note').value.trim(),
+        categoryId: null, photo: null, date: Date.now(), createdAt: Date.now(),
+      });
+      toast('已转账 ✓'); close(); router();
+    };
+  });
+}
+
+/** 校准余额：把软件里算的和实际对一下，差出来的记成一笔「校准」 */
+async function openCalibrateSheet(a) {
+  const { bal } = await loadAccountWorld();
+  const cur = bal[a.id] || 0;
+  const html = `<h3>校准「${a.name}」的余额</h3>
+    <div class="hint-line">打开微信 / 银行 App 看一眼真实余额，填在下面。差出来的那部分会记成一笔「校准」，往后就对得上数了。校准不算花钱。</div>
+    <div class="calib-cur"><span class="muted">软件里现在算的是</span><span class="a">${moneyNeg(cur)}</span></div>
+    <div class="field"><label>实际有多少钱</label>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px;color:var(--muted);font-weight:700">¥</span>
+        <input id="real" class="input" style="flex:1;text-align:right;font-size:20px;font-weight:700" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="${Math.round(cur * 100) / 100}">
+      </div>
+    </div>
+    <div class="field"><label>备注（可选）</label><input id="note" class="input" placeholder="如：漏记了几笔"></div>
+    <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">校准</button></div>`;
+  openSheet(html, (root, close) => {
+    bindAmountInput(root.querySelector('#real'));
+    root.querySelector('#c').onclick = close;
+    root.querySelector('#s').onclick = async () => {
+      const raw = root.querySelector('#real').value.trim();
+      if (raw === '') { toast('请填一下实际余额'); return; }
+      const want = parseFloat(raw) || 0;
+      const delta = Math.round((want - cur) * 100) / 100;
+      if (delta === 0) { toast('和实际一样，不用改'); close(); return; }
+      await db.addRecord({
+        id: uid(), kind: 'adjust', type: delta > 0 ? 'income' : 'expense', amount: delta,
+        accountId: a.id, note: root.querySelector('#note').value.trim() || '余额校准',
+        categoryId: null, photo: null, date: Date.now(), createdAt: Date.now(),
+      });
+      toast('校准好了 ✓'); close(); router();
+    };
+  });
+}
+
+/** 记投资盈亏：赚了 / 亏了多少钱，自己填（这软件不联网，猜不到行情） */
+async function openPnlSheet(a) {
+  let dir = 'up';
+  const html = `<h3>记「${a.name}」的盈亏</h3>
+    <div class="hint-line">基金 / 股票今天赚了还是亏了，自己填一个数，账户余额就跟着变。<b>盈亏不算收入也不算支出</b>，不会影响你的消费统计。</div>
+    <div class="seg" id="dseg"><button data-d="up" class="on">📈 赚了</button><button data-d="down">📉 亏了</button></div>
+    <div style="text-align:center;margin:10px 0 4px">
+      <span style="font-size:20px;color:var(--muted)">¥</span>
+      <input id="amt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
+    </div>
+    <div class="field mt16"><label>备注（可选）</label><input id="note" class="input" placeholder="如：今日净值"></div>
+    <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">记上</button></div>`;
+  openSheet(html, (root, close) => {
+    bindAmountInput(root.querySelector('#amt'));
+    root.querySelectorAll('#dseg button').forEach((b) => b.onclick = () => {
+      dir = b.dataset.d;
+      root.querySelectorAll('#dseg button').forEach((x) => x.classList.toggle('on', x === b));
+    });
+    root.querySelector('#c').onclick = close;
+    root.querySelector('#s').onclick = async () => {
+      const v = parseFloat(root.querySelector('#amt').value);
+      if (!(v > 0)) { toast('请输入金额'); return; }
+      const delta = Math.round((dir === 'up' ? v : -v) * 100) / 100;
+      await db.addRecord({
+        id: uid(), kind: 'pnl', type: dir === 'up' ? 'income' : 'expense', amount: delta,
+        accountId: a.id, note: root.querySelector('#note').value.trim(),
+        categoryId: null, photo: null, date: Date.now(), createdAt: Date.now(),
+      });
+      toast('记上了 ✓'); close(); router();
+    };
+  });
+}
+
+/** 定投设置：投到哪 + 从哪扣 + 多少钱 + 每月几号（或每周几）+ 开关 */
+async function openPlanSheet(planId) {
+  const { accs, plans } = await loadAccountWorld();
+  const p = planId ? plans.find((x) => x.id === planId) : null;
+  if (planId && !p) { toast('这个定投找不到了'); return; }
+  if (accs.length < 2) { toast('定投要有「扣钱的账户」和「理财账户」，先添加一个吧'); return; }
+
+  let toId = p ? p.toAccountId : (((accs.find((a) => a.kind === 'invest') || accs[0]) || {}).id);
+  let fromId = p ? p.fromAccountId : (((accs.find((a) => a.id !== toId) || accs[0]) || {}).id);
+  let freq = p ? (p.freq || 'monthly') : 'monthly';
+  let day = p ? Number(p.day) : new Date().getDate();
+
+  const dayBoxHTML = () => (freq === 'weekly'
+    ? `<div class="card-title mt16">每周哪天</div><div class="week-row" id="wrow">${['日', '一', '二', '三', '四', '五', '六'].map((w, i) => `<button data-d="${i}" class="${Number(day) === i ? 'on' : ''}">${w}</button>`).join('')}</div>`
+    : `<div class="field mt16"><label>每月几号</label><input id="dnum" class="input" inputmode="numeric" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="15" value="${Number(day) || 1}"><div class="hint-line" style="margin:6px 0 0">遇到小月（比如 2 月没有 31 号）会自动算到当月最后一天。</div></div>`);
+
+  const html = `<h3>${p ? '定投设置' : '添加定投'}</h3>
+    <div class="hint-line">定投＝固定时间自动从某个账户转一笔钱到理财账户（基金 / 股票）。<b>不用你手动记，打开 App 就自动补上。</b></div>
+    ${acctRowHTML(accs, 'toRow', '投到哪个账户（基金 / 股票）')}
+    ${acctRowHTML(accs, 'fromRow', '从哪个账户扣钱')}
+    <div style="text-align:center;margin:16px 0 4px">
+      <span style="font-size:20px;color:var(--muted)">¥</span>
+      <input id="amt" inputmode="decimal" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="0.00" value="${p ? p.amount : ''}" style="border:none;outline:none;font-size:38px;font-weight:800;width:58%;text-align:center;color:var(--ink);background:transparent">
+    </div>
+    <div class="card-title mt16">多久投一次</div>
+    <div class="seg" id="fseg">
+      <button data-f="monthly" class="${freq === 'monthly' ? 'on' : ''}">每月</button>
+      <button data-f="weekly" class="${freq === 'weekly' ? 'on' : ''}">每周</button>
+    </div>
+    <div id="dayBox">${dayBoxHTML()}</div>
+    ${p ? `<div class="row plain mt16">
+      <div style="flex:1;min-width:0"><div class="label">正在运行</div><div class="sub">关掉以后就不再自动投了（已经投过的不受影响）</div></div>
+      <label class="switch"><input type="checkbox" id="act" ${p.active ? 'checked' : ''}><span class="track"></span><span class="dot"></span></label>
+    </div>` : ''}
+    <div class="flex mt16"><button class="btn soft" id="c">取消</button><button class="btn" id="s">保存</button></div>
+    ${p ? '<button class="btn danger block mt16" id="delp">删除这个定投</button>' : ''}`;
+
+  openSheet(html, (root, close) => {
+    const dayBox = root.querySelector('#dayBox');
+    const bindDayBox = () => {
+      const wrow = root.querySelector('#wrow');
+      if (wrow) wrow.querySelectorAll('button[data-d]').forEach((b) => b.onclick = () => {
+        day = Number(b.dataset.d);
+        wrow.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      });
+      const dnum = root.querySelector('#dnum');
+      if (dnum) dnum.addEventListener('input', (e) => { e.target.value = e.target.value.replace(/[^\d]/g, ''); day = parseInt(e.target.value, 10) || 1; });
+    };
+    bindDayBox();
+    root.querySelectorAll('#fseg button').forEach((b) => b.onclick = () => {
+      freq = b.dataset.f;
+      root.querySelectorAll('#fseg button').forEach((x) => x.classList.toggle('on', x === b));
+      if (freq === 'weekly') { if (Number(day) > 6) day = new Date().getDay(); } else if (Number(day) < 1) day = new Date().getDate();
+      dayBox.innerHTML = dayBoxHTML(); bindDayBox();
+    });
+
+    bindAmountInput(root.querySelector('#amt'));
+    bindAcctRow(root, accs, () => toId, (id) => { toId = id; }, null, 'toRow');
+    bindAcctRow(root, accs, () => fromId, (id) => { fromId = id; }, null, 'fromRow');
+
+    root.querySelector('#c').onclick = close;
+    root.querySelector('#s').onclick = async () => {
+      const amt = parseFloat(root.querySelector('#amt').value);
+      if (!(amt > 0)) { toast('请输入金额'); return; }
+      if (toId === fromId) { toast('扣钱的账户和投资的账户不能是同一个'); return; }
+      const dnum = root.querySelector('#dnum');
+      let d = Number(day);
+      if (freq === 'monthly') {
+        d = dnum ? (parseInt(dnum.value, 10) || 1) : (Number(day) || 1);
+        d = Math.min(31, Math.max(1, d));
+      } else {
+        d = Math.min(6, Math.max(0, Number(day) || 0));
+      }
+      const actEl = root.querySelector('#act');
+      await db.addPlan({
+        id: p ? p.id : ('pl' + Date.now()),
+        toAccountId: toId, fromAccountId: fromId,
+        amount: Math.round(amt * 100) / 100,
+        freq, day: d,
+        startDate: p ? p.startDate : Date.now(),
+        lastRunKey: p ? (p.lastRunKey || '') : '',
+        active: actEl ? !!actEl.checked : true,
+        createdAt: p ? p.createdAt : Date.now(),
+      });
+      await runDuePlans();          // 保存完立刻把已经到期的补上
+      toast('定投已保存 ✓'); close(); router();
+    };
+    const delp = root.querySelector('#delp');
+    if (delp) delp.onclick = async () => {
+      if (!confirm('删掉这个定投？\n\n以后不再自动投；已经自动记下的那些转账会留着。')) return;
+      await db.delPlan(p.id);
+      toast('已删除定投'); close(); router();
+    };
+  });
+}
+
+/** 打开 App 时把到期的定投补记上。
+ *  记录 id 是「计划 + 日期」拼死的，所以反复打开也只会有一条，不会重复。 */
+async function runDuePlans() {
+  let plans = [];
+  try { plans = await db.getAllPlans(); } catch (_) { return 0; }
+  const today = new Date();
+  let n = 0;
+  for (const p of plans) {
+    if (!p.active) continue;
+    const keys = dueDates(p, today);
+    if (!keys.length) continue;
+    for (const k of keys) {
+      const ts = new Date(k + 'T09:00:00').getTime();   // 记在当天早上 9 点，日历里不会跑到「未来」
+      await db.addRecord({
+        id: runRecordId(p, k), kind: 'transfer', type: 'transfer',
+        amount: p.amount, accountId: p.fromAccountId, toAccountId: p.toAccountId,
+        note: '定投', categoryId: null, photo: null,
+        date: ts, createdAt: Date.now(), planId: p.id,
+      });
+      n++;
+    }
+    // 记住跑到哪儿了，下次不再重复补
+    await db.addPlan(Object.assign({}, p, { lastRunKey: keys[keys.length - 1] }));
+  }
+  if (n) toast('定投自动记了 ' + n + ' 笔');
+  return n;
 }
 
 async function openQuickSheet() {
@@ -614,7 +1179,8 @@ function calendarHTML(d, map) {
     </div><div id="dayDetail"></div>`;
 }
 async function renderCalendar() {
-  const records = await db.getRecords();
+  const all = await db.getRecords();
+  const records = onlyNormal(all);                     // 日历只看真实收支，转账不算花钱
   const map = dayTotals(records);
   const d = state.calDate || new Date();
   view.innerHTML = calendarHTML(d, map);
@@ -640,24 +1206,26 @@ async function renderCalendar() {
     state.selDate = parseDayKey(b.dataset.k);
     router();
   });
-  await renderDayDetail(view, records);
+  await renderDayDetail(view, records, all);
 }
-async function renderDayDetail(view, records) {
+async function renderDayDetail(view, records, all) {
   const box = view.querySelector('#dayDetail'); if (!box) return;
-  const cats = await db.getAllCategories(); const cm = {}; cats.forEach((c) => (cm[c.id] = c));
+  const { cm, am } = await loadMaps();
   const k = dayKey(state.selDate || new Date());
   const day = records.filter((r) => dayKey(new Date(r.date)) === k).sort((a, b) => b.date - a.date);
   const expRecs = day.filter((r) => r.type === 'expense');
   const incRecs = day.filter((r) => r.type === 'income');
   const exp = expRecs.reduce((s, r) => s + r.amount, 0);
   const inc = incRecs.reduce((s, r) => s + r.amount, 0);
+  // 转账 / 校准 / 盈亏 不算花钱，日历格子里不显示，但得让用户知道「钱动过」
+  const special = (all || []).filter((r) => !isNormal(r) && dayKey(new Date(r.date)) === k);
   const sel = state.selDate || new Date();
   const weekName = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][sel.getDay()];
   const dateLabel = `${sel.getMonth() + 1}月${sel.getDate()}日 ${weekName}`;
   box.innerHTML = `<div class="day-label"><span>📌 ${dateLabel}</span><button class="day-add" id="dayAdd">＋ 补一笔</button></div><div class="day-sum">
     <div class="box tap-box" data-dtype="expense"><div class="v exp-amt">${moneyShort(exp)}</div><div class="k">支出 ▾</div></div>
     <div class="box tap-box" data-dtype="income"><div class="v inc-amt">${moneyShort(inc)}</div><div class="k">收入 ▾</div></div>
-  </div><div id="calDayList" class="rec-list" hidden></div>`;
+  </div>${special.length ? `<div class="hint-line" style="margin:0 2px 8px">这天还有 ${special.length} 笔转账 / 校准 / 盈亏，不算支出 —— 在「我的钱」里能看</div>` : ''}<div id="calDayList" class="rec-list" hidden></div>`;
 
   // 「补一笔」：直接记到当前选中的这一天（昨天忘了记就能补上）
   const addBtn = box.querySelector('#dayAdd');
@@ -685,7 +1253,7 @@ async function renderDayDetail(view, records) {
     if (filtered.length === 0) {
       listEl.innerHTML = `<div class="empty">暂无${curFilter === 'expense' ? '支出' : '收入'}记录</div>`;
     } else {
-      listEl.innerHTML = `<div class="list">${filtered.map((r) => recordRow(r, cm)).join('')}</div>`;
+      listEl.innerHTML = `<div class="list">${filtered.map((r) => recordRow(r, cm, am)).join('')}</div>`;
       wireRecordList(listEl);
     }
     listEl.hidden = false;
@@ -715,7 +1283,7 @@ async function renderStats() {
   const d = new Date();
   const [s, e] = rangeFor(period, d);
   const sEnd = e.getTime() + 86400000 - 1;
-  const records = await db.getRecords();
+  const records = onlyNormal(await db.getRecords());
   const inRange = records.filter((r) => r.date >= s.getTime() && r.date <= sEnd);
   const exp = inRange.filter((r) => r.type === 'expense').reduce((a, r) => a + r.amount, 0);
   const inc = inRange.filter((r) => r.type === 'income').reduce((a, r) => a + r.amount, 0);
@@ -799,7 +1367,7 @@ async function renderMe() {
   const expCats = cats.filter((c) => c.type === 'expense');
   const budgets = await db.getBudgets(); const bm = {}; budgets.forEach((b) => (bm[b.id] = b.limit));
   // 本月已花（用于预算实时反馈）
-  const records = await db.getRecords();
+  const records = onlyNormal(await db.getRecords());   // 预算只看真实消费
   const [ms, me] = monthRange(new Date());
   const mEnd = me.getTime() + 86400000 - 1;
   const monthRecs = records.filter((r) => r.type === 'expense' && r.date >= ms.getTime() && r.date <= mEnd);
@@ -1025,34 +1593,48 @@ async function openAddCat() {  let type = 'expense', color = COLOR_SW[0], emoji 
   });
 }
 // 导出 Excel 表格（CSV，带 BOM，Excel/WPS 打开中文不乱码）
+// 注意：转账 / 校准 / 盈亏也要导出来（对账要看），但不计进「合计支出/收入」，否则结余会被算歪。
 async function exportCSV() {
   const records = await db.getRecords();
-  const cats = await db.getAllCategories(); const cm = {}; cats.forEach((c) => (cm[c.id] = c));
+  const cats = await db.getAllCategories(); const cm = {}; cats.forEach((c) => { cm[c.id] = c; });
+  const accs = await db.getAllAccounts(); const am = {}; accs.forEach((a) => { am[a.id] = a; });
   if (records.length === 0) { toast('还没有任何记录'); return; }
   const esc = (v) => {
     const s = String(v == null ? '' : v);
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
+  const kindLabel = (r) => {
+    if (r.kind === 'transfer') return '转账';
+    if (r.kind === 'adjust') return '余额校准';
+    if (r.kind === 'pnl') return '投资盈亏';
+    return r.type === 'expense' ? '支出' : '收入';
+  };
   const list = records.slice().sort((a, b) => a.date - b.date);
-  const rows = [['日期', '时间', '类型', '分类', '金额(元)', '备注']];
-  let totalExp = 0, totalInc = 0;
+  const rows = [['日期', '时间', '类型', '分类', '账户', '金额(元)', '备注']];
+  let totalExp = 0, totalInc = 0, totalTransfer = 0;
   for (const r of list) {
     const d = new Date(r.date);
-    const c = cm[r.categoryId] || { name: '已删分类' };
-    if (r.type === 'expense') totalExp += r.amount; else totalInc += r.amount;
+    const c = cm[r.categoryId] || null;
+    if (isNormal(r)) { if (r.type === 'expense') totalExp += r.amount; else totalInc += r.amount; }
+    if (r.kind === 'transfer') totalTransfer += Number(r.amount) || 0;
+    let acc = (am[r.accountId] || {}).name || '';
+    if (r.kind === 'transfer') acc = (acc || '未指定') + ' → ' + ((am[r.toAccountId] || {}).name || '未指定');
     rows.push([
       dayKey(d),
       d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-      r.type === 'expense' ? '支出' : '收入',
-      c.name,
-      r.amount.toFixed(2),
+      kindLabel(r),
+      c ? c.name : (r.kind ? '—' : '已删分类'),
+      acc,
+      (Number(r.amount) || 0).toFixed(2),
       r.note || '',
     ]);
   }
   rows.push([]);
-  rows.push(['合计支出', '', '', '', totalExp.toFixed(2), '']);
-  rows.push(['合计收入', '', '', '', totalInc.toFixed(2), '']);
-  rows.push(['结余', '', '', '', (totalInc - totalExp).toFixed(2), '']);
+  rows.push(['合计支出', '', '', '', '', totalExp.toFixed(2), '']);
+  rows.push(['合计收入', '', '', '', '', totalInc.toFixed(2), '']);
+  rows.push(['结余', '', '', '', '', (totalInc - totalExp).toFixed(2), '']);
+  rows.push(['（转账合计）', '', '', '', '', totalTransfer.toFixed(2), '']);
+  rows.push(['注：转账 / 校准 / 盈亏不算收支，不计入上面的合计。', '', '', '', '', '', '']);
   const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const how = await saveBlob(blob, `暖记账目_${dayKey(new Date())}.csv`);
@@ -1123,6 +1705,7 @@ async function importBackup(e) {
 async function init() {
   if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {})); }
   await db.seedIfEmpty();
+  try { await runDuePlans(); } catch (_) { /* 定投补记失败不该拦住整个 App */ }
   if (!location.hash) location.hash = '#/record';
   router();
   tabbar.querySelectorAll('.tab').forEach((t) => t.onclick = () => { if (location.hash !== t.dataset.route) location.hash = t.dataset.route; else router(); });
