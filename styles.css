@@ -338,8 +338,14 @@ body {
 }
 .item .emoji { width: 42px; height: 42px; border-radius: 14px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-size: 22px; flex: none; }
 .item .body { flex: 1; min-width: 0; }
-.item .body .t { font-weight: 600; }
-.item .body .s { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.item .body .t { font-weight: 600; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 备注：单独占一行、灰色小字、排在分类下面。太长就省略号，不换行 —— 避免长备注把整行撑高 */
+.item .body .n {
+  font-size: 12px; color: var(--muted); line-height: 1.3; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 时间降一号（11px），跟备注拉开层次：分类 > 备注 > 时间 */
+.item .body .s { font-size: 11px; color: var(--muted); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item .amt { font-weight: 700; font-size: 16px; }
 .item .amt.exp { color: var(--accent-deep); }
 .item .amt.inc { color: var(--green); }
