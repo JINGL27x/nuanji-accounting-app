@@ -191,13 +191,13 @@ body {
 .seg button { flex: 1; border: none; background: none; padding: 10px; border-radius: var(--radius-pill); font-weight: 700; color: var(--ink-soft); cursor: pointer; }
 .seg button.on { background: var(--surface); color: var(--accent-deep); box-shadow: var(--shadow-sm); }
 
-/* 分类选择网格 */
-.cat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+/* 分类选择网格（同样用 minmax(0,1fr)：分类名长短不一时不许把列撑宽） */
+.cat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .cat {
   border: none; background: var(--surface); border-radius: var(--radius-sm);
   padding: 12px 6px; cursor: pointer; display: flex; flex-direction: column;
   align-items: center; gap: 6px; box-shadow: var(--shadow-sm);
-  color: var(--ink); transition: transform .12s;
+  color: var(--ink); transition: transform .12s; min-width: 0;
 }
 .cat:active { transform: scale(.95); }
 .cat .emoji { font-size: 24px; }
@@ -264,15 +264,19 @@ body {
   flex: 1; padding: 9px 12px; font-size: 14px;
   border-color: var(--line);
 }
-.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.cal-dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; }
+/* 关键：列宽必须用 minmax(0, 1fr)，不能用 1fr。
+   1fr 的最小宽度是「内容最小宽度」，而格子里那行金额是不换行的（¥113.19），
+   窄屏上它会把这列从 36px 顶到 44px，7 列加起来超出卡片 → 最右的「周日」列被挤出框。 */
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.cal-dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px 0; min-width: 0; }
 .cal-day {
   aspect-ratio: 1 / 1; border: none; background: none; border-radius: 14px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   position: relative; color: var(--ink);
+  min-width: 0;                 /* grid/flex 子项默认 min-width:auto，会被内容顶开，这里必须压住 */
 }
 .cal-day .d { font-size: 15px; font-weight: 600; }
-.cal-day .amt { font-size: 9px; color: var(--accent-deep); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-day .amt { font-size: 9px; color: var(--accent-deep); min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-day.today { background: var(--accent-soft); }
 .cal-day.sel { background: var(--accent); color: #fff; }
 .cal-day.sel .amt { color: #fff; }
